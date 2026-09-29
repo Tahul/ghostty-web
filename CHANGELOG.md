@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.0 (2026-09-29)
+
+Embedders can now route link opening, wrapped URLs are detected as one link, and mouse input goes to exactly one owner.
+
+### Features
+
+* **links:** add `linkHandler` option (`ILinkHandler`, xterm.js-compatible `activate`/`hover`/`leave`). When set, both built-in providers (OSC 8 and URL regex) call `linkHandler.activate(event, uri, range)` on every click instead of `window.open`; without it, Ctrl/Cmd+click still opens a new tab. The option is read at event time, so `term.options.linkHandler = ...` works after `open()`.
+* **links:** URLs soft-wrapped across rows are detected as a single multi-row link, found from any row it touches.
+* **mouse:** Shift bypasses mouse tracking (xterm/iTerm/Ghostty convention): Shift+drag selects text, Shift+wheel scrolls the viewport, and nothing is reported to the program.
+
+### Bug Fixes
+
+* **mouse:** while the program tracks the mouse, a wheel notch is reported once and no longer also scrolls the viewport or sends arrow keys on the alternate screen.
+* **mouse:** while the program tracks the mouse, mousedown and double/triple-click no longer start a text selection, and link clicks are not activated (unless Shift is held).
+* **links:** clicks ending a drag-selection or part of a double/triple-click no longer activate links.
+
+### Known limitations
+
+* Wrapped-URL detection relies on the row wrap flag, which the WASM API exposes for the active screen only; URLs wrapped within scrollback rows are still split per row.
+
 ## [0.5.0](https://github.com/Tahul/ghostty-web/compare/v0.4.0...v0.5.0) (2026-09-29)
 
 First release published as `@tahul/ghostty-web`. Adds mouse tracking, OSC 8 hyperlink clicking and selection improvements, plus WASM patch, PTY, rendering and input fixes.
