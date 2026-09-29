@@ -818,6 +818,8 @@ export class InputHandler {
    */
   private handleMouseDown(event: MouseEvent): void {
     if (this.isDisposed) return;
+    // Shift bypasses mouse reporting (selection belongs to the terminal UI)
+    if (event.shiftKey) return;
     if (!this.mouseConfig?.hasMouseTracking()) return;
 
     const cell = this.pixelToCell(event);
@@ -845,10 +847,14 @@ export class InputHandler {
     if (this.isDisposed) return;
     if (!this.mouseConfig?.hasMouseTracking()) return;
 
+    const button = event.button;
+
+    // Shift bypasses mouse reporting, unless the press was reported (Shift
+    // pressed mid-drag): still release it so the app doesn't see a stuck button
+    if (event.shiftKey && !(this.mouseButtonsPressed & (1 << button))) return;
+
     const cell = this.pixelToCell(event);
     if (!cell) return;
-
-    const button = event.button;
 
     // Clear pressed button
     this.mouseButtonsPressed &= ~(1 << button);
@@ -861,6 +867,7 @@ export class InputHandler {
    */
   private handleMouseMove(event: MouseEvent): void {
     if (this.isDisposed) return;
+    if (event.shiftKey) return;
     if (!this.mouseConfig?.hasMouseTracking()) return;
 
     // Check if button motion mode or any-event tracking is enabled
@@ -892,6 +899,8 @@ export class InputHandler {
    */
   private handleWheel(event: WheelEvent): void {
     if (this.isDisposed) return;
+    // Shift bypasses mouse reporting (the wheel scrolls the terminal viewport)
+    if (event.shiftKey) return;
     if (!this.mouseConfig?.hasMouseTracking()) return;
 
     const cell = this.pixelToCell(event);

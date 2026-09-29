@@ -22,9 +22,30 @@ export interface ITerminalOptions {
   // Scrolling options
   smoothScrollDuration?: number; // Duration in ms for smooth scroll animation (default: 100, 0 = instant)
 
+  /**
+   * Handles activation (and optionally hover/leave) of links detected by the
+   * built-in providers (OSC 8 hyperlinks and plain-text URLs). When set, it is
+   * called on every click, regardless of modifier keys; when unset, links open
+   * with window.open on Ctrl/Cmd+click. Read at event time, so it can be
+   * changed after open() via `term.options.linkHandler = ...`.
+   */
+  linkHandler?: ILinkHandler | null;
+
   // Internal: Ghostty WASM instance (optional, for test isolation)
   // If not provided, uses the module-level instance from init()
   ghostty?: Ghostty;
+}
+
+/**
+ * Link handler for built-in link providers (xterm.js-compatible shape)
+ */
+export interface ILinkHandler {
+  /** Called when a link is activated (clicked). `text` is the URI (OSC 8) or the matched URL. */
+  activate(event: MouseEvent, text: string, range: IBufferRange): void;
+  /** Called when the mouse enters a link. */
+  hover?(event: MouseEvent, text: string, range: IBufferRange): void;
+  /** Called when the mouse leaves a link. */
+  leave?(event: MouseEvent, text: string, range: IBufferRange): void;
 }
 
 export interface ITheme {

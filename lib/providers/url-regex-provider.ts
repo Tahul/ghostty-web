@@ -8,13 +8,16 @@
  * take precedence over regex-detected URLs.
  */
 
-import type { IBufferRange, ILink, ILinkProvider } from '../types';
+import type { IBufferCellPosition, ILink, ILinkProvider } from '../types';
+import { type ITerminalWithLinkHandler, createBuiltinLink } from './builtin-link';
 
 /**
  * URL Regex Provider
  *
- * Detects plain text URLs on a single line using regex.
- * Does not support multi-line URLs or file paths.
+ * Detects plain text URLs using regex. Soft-wrapped lines (rows whose
+ * successors have `isWrapped === true`) are joined into one logical line, so
+ * a URL wrapped across rows yields a single multi-row link. Does not detect
+ * file paths.
  *
  * Supported protocols:
  * - https://, http://
@@ -38,83 +41,105 @@ export class UrlRegexProvider implements ILinkProvider {
    */
   private static readonly TRAILING_PUNCTUATION = /[.,;!?)\]]+$/;
 
+  /**
+   * Upper bound on rows joined into one logical line (guards against
+   * pathological wrap chains)
+   */
+  private static readonly MAX_WRAPPED_ROWS = 64;
+
   constructor(private terminal: ITerminalForUrlProvider) {}
 
   /**
-   * Provide all regex-detected URLs on the given row
+   * Provide all regex-detected URLs touching the given row
    */
   provideLinks(y: number, callback: (links: ILink[] | undefined) => void): void {
     const links: ILink[] = [];
+    const buffer = this.terminal.buffer.active;
 
-    const line = this.terminal.buffer.active.getLine(y);
+    const line = buffer.getLine(y);
     if (!line) {
       callback(undefined);
       return;
     }
 
-    // Convert line cells to text
-    const lineText = this.lineToText(line);
+    // Expand to the logical line: walk back while the current row continues
+    // the previous one, and forward while the next row continues this one
+    const maxRows = UrlRegexProvider.MAX_WRAPPED_ROWS;
+    let startY = y;
+    let current = line;
+    while (current.isWrapped && startY > 0 && y - startY < maxRows) {
+      const prev = buffer.getLine(startY - 1);
+      if (!prev) break;
+      startY--;
+      current = prev;
+    }
+    let endY = y;
+    while (endY - startY < maxRows) {
+      const next = buffer.getLine(endY + 1);
+      if (!next?.isWrapped) break;
+      endY++;
+    }
+
+    // Build the logical line text plus a map from UTF-16 index to cell position
+    let text = '';
+    const positions: IBufferCellPosition[] = [];
+    for (let row = startY; row <= endY; row++) {
+      const rowLine = row === y ? line : buffer.getLine(row);
+      if (!rowLine) break;
+      text += this.lineToText(rowLine, row, positions);
+    }
 
     // Reset regex state (global flag maintains state)
     UrlRegexProvider.URL_REGEX.lastIndex = 0;
 
-    // Find all URL matches in the line
-    let match: RegExpExecArray | null = UrlRegexProvider.URL_REGEX.exec(lineText);
+    // Find all URL matches in the logical line
+    let match: RegExpExecArray | null = UrlRegexProvider.URL_REGEX.exec(text);
     while (match !== null) {
-      let url = match[0];
-      const startX = match.index;
-      let endX = match.index + url.length - 1; // Inclusive end
-
       // Strip trailing punctuation
-      const stripped = url.replace(UrlRegexProvider.TRAILING_PUNCTUATION, '');
-      if (stripped.length < url.length) {
-        url = stripped;
-        endX = startX + url.length - 1;
-      }
+      const url = match[0].replace(UrlRegexProvider.TRAILING_PUNCTUATION, '');
 
       // Skip if URL is too short (e.g., just "http://")
       if (url.length > 8) {
-        links.push({
-          text: url,
-          range: {
-            start: { x: startX, y },
-            end: { x: endX, y },
-          },
-          activate: (event) => {
-            // Open link if Ctrl/Cmd is pressed
-            if (event.ctrlKey || event.metaKey) {
-              window.open(url, '_blank', 'noopener,noreferrer');
-            }
-          },
-        });
+        const start = positions[match.index];
+        const end = positions[match.index + url.length - 1]; // Inclusive end
+
+        // Only report links that touch the requested row
+        if (start.y <= y && end.y >= y) {
+          links.push(
+            createBuiltinLink(this.terminal, url, {
+              start: { x: start.x, y: start.y },
+              end: { x: end.x, y: end.y },
+            })
+          );
+        }
       }
 
       // Get next match
-      match = UrlRegexProvider.URL_REGEX.exec(lineText);
+      match = UrlRegexProvider.URL_REGEX.exec(text);
     }
 
     callback(links.length > 0 ? links : undefined);
   }
 
   /**
-   * Convert a buffer line to plain text string
+   * Convert a buffer line to plain text, recording the cell position of every
+   * UTF-16 code unit in `positions`
    */
-  private lineToText(line: IBufferLineForUrlProvider): string {
+  private lineToText(
+    line: IBufferLineForUrlProvider,
+    y: number,
+    positions: IBufferCellPosition[]
+  ): string {
     const chars: string[] = [];
 
     for (let x = 0; x < line.length; x++) {
       const cell = line.getCell(x);
-      if (!cell) {
-        chars.push(' ');
-        continue;
-      }
-
-      const codepoint = cell.getCodepoint();
+      const codepoint = cell ? cell.getCodepoint() : 0;
       // Skip null characters and control characters
-      if (codepoint === 0 || codepoint < 32) {
-        chars.push(' ');
-      } else {
-        chars.push(String.fromCodePoint(codepoint));
+      const char = codepoint < 32 ? ' ' : String.fromCodePoint(codepoint);
+      chars.push(char);
+      for (let i = 0; i < char.length; i++) {
+        positions.push({ x, y });
       }
     }
 
@@ -129,7 +154,7 @@ export class UrlRegexProvider implements ILinkProvider {
 /**
  * Minimal terminal interface required by UrlRegexProvider
  */
-export interface ITerminalForUrlProvider {
+export interface ITerminalForUrlProvider extends ITerminalWithLinkHandler {
   buffer: {
     active: {
       getLine(y: number): IBufferLineForUrlProvider | undefined;
@@ -142,6 +167,8 @@ export interface ITerminalForUrlProvider {
  */
 interface IBufferLineForUrlProvider {
   length: number;
+  /** Whether this row continues the previous one (soft wrap) */
+  isWrapped?: boolean;
   getCell(x: number):
     | {
         getCodepoint(): number;

@@ -1192,4 +1192,75 @@ describe('InputHandler', () => {
       expect(dataReceived.length).toBe(0);
     });
   });
+
+  describe('Mouse tracking', () => {
+    function createMouseHandler() {
+      return new InputHandler(
+        ghostty,
+        container as any,
+        (data) => dataReceived.push(data),
+        () => {},
+        undefined,
+        undefined,
+        (mode) => mode === 1002, // button-motion tracking
+        undefined,
+        undefined,
+        {
+          hasMouseTracking: () => true,
+          hasSgrMouseMode: () => true,
+          getCellDimensions: () => ({ width: 10, height: 20 }),
+          getCanvasOffset: () => ({ left: 0, top: 0 }),
+        }
+      );
+    }
+
+    function mouseEvent(type: string, init: Record<string, unknown> = {}) {
+      return {
+        type,
+        button: 0,
+        clientX: 15,
+        clientY: 25,
+        deltaY: -100,
+        shiftKey: false,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+        preventDefault: mock(() => {}),
+        ...init,
+      };
+    }
+
+    test('reports press, drag, release and wheel', () => {
+      createMouseHandler();
+      container.dispatchEvent(mouseEvent('mousedown'));
+      container.dispatchEvent(mouseEvent('mousemove', { clientX: 25 }));
+      container.dispatchEvent(mouseEvent('mouseup', { clientX: 25 }));
+      container.dispatchEvent(mouseEvent('wheel'));
+
+      expect(dataReceived).toEqual([
+        '\x1b[<0;2;2M',
+        '\x1b[<32;3;2M',
+        '\x1b[<0;3;2m',
+        '\x1b[<64;2;2M',
+      ]);
+    });
+
+    test('sends nothing when Shift is held', () => {
+      createMouseHandler();
+      for (const type of ['mousedown', 'mousemove', 'mouseup', 'wheel']) {
+        container.dispatchEvent(mouseEvent(type, { shiftKey: true }));
+      }
+
+      expect(dataReceived).toEqual([]);
+    });
+
+    test('still releases a reported press when Shift is pressed mid-drag', () => {
+      createMouseHandler();
+      container.dispatchEvent(mouseEvent('mousedown'));
+      container.dispatchEvent(mouseEvent('mousemove', { shiftKey: true, clientX: 25 }));
+      container.dispatchEvent(mouseEvent('mouseup', { shiftKey: true }));
+
+      expect(dataReceived).toEqual(['\x1b[<0;2;2M', '\x1b[<4;2;2m']);
+    });
+  });
 });

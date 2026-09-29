@@ -14,7 +14,7 @@ import type { IBufferCellPosition, ILink, ILinkProvider } from './types';
 export class LinkDetector {
   private providers: ILinkProvider[] = [];
 
-  // Cache links by position range: `r${row}:${startX}-${endX}`
+  // Cache links by position range: `r${startY}:${startX}-${endY}:${endX}`
   private linkCache = new Map<string, ILink>();
 
   // Track which rows have been scanned to avoid redundant provider calls
@@ -106,7 +106,7 @@ export class LinkDetector {
     // Cache by position range - this uniquely identifies links even when
     // multiple OSC 8 links exist on the same line
     const { start: s, end: e } = link.range;
-    const cacheKey = `r${s.y}:${s.x}-${e.x}`;
+    const cacheKey = `r${s.y}:${s.x}-${e.y}:${e.x}`;
     // Don't overwrite existing entries - earlier providers (OSC8) take
     // precedence over later ones (regex) for the same range
     if (!this.linkCache.has(cacheKey)) {

@@ -450,6 +450,9 @@ export class SelectionManager {
           this.clearSelection();
         }
 
+        // The app owns the mouse while it tracks it; Shift gives it back
+        if (this.isMouseOwnedByApp(e)) return;
+
         // Start new selection (convert to absolute coordinates)
         const absoluteRow = this.viewportRowToAbsolute(cell.row);
         this.selectionStart = { col: cell.col, absoluteRow };
@@ -597,6 +600,8 @@ export class SelectionManager {
     // Handle click events for double-click (word) and triple-click (line) selection
     // Use event.detail which browsers set to click count (1, 2, 3, etc.)
     canvas.addEventListener('click', (e: MouseEvent) => {
+      if (this.isMouseOwnedByApp(e)) return;
+
       // event.detail: 1 = single, 2 = double, 3 = triple click
       if (e.detail === 2) {
         // Double-click - select word
@@ -749,6 +754,14 @@ export class SelectionManager {
     };
 
     document.addEventListener('click', this.boundClickHandler);
+  }
+
+  /**
+   * Whether mouse input belongs to the running app (mouse tracking enabled
+   * and Shift not held)
+   */
+  private isMouseOwnedByApp(e: MouseEvent): boolean {
+    return !e.shiftKey && this.wasmTerm.hasMouseTracking();
   }
 
   /**

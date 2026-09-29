@@ -644,7 +644,7 @@ export interface ILink {
   activate(event: MouseEvent): void;
 
   /** Optional: called when mouse enters/leaves the link */
-  hover?(isHovered: boolean): void;
+  hover?(isHovered: boolean, event?: MouseEvent): void;
 
   /** Optional: called to clean up resources */
   dispose?(): void;

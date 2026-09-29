@@ -67,6 +67,26 @@ websocket.onmessage = (e) => term.write(e.data);
 
 For a comprehensive client <-> server example, refer to the [demo](./demo/index.html#L141).
 
+### Links
+
+OSC 8 hyperlinks and plain-text URLs (including URLs soft-wrapped across rows) are detected automatically. By default they open in a new tab on Ctrl/Cmd+click. Pass a `linkHandler` (same shape as xterm.js) to route them yourself; it is called on every click, whatever the modifiers, and can be set or replaced after `open()`:
+
+```javascript
+term.options.linkHandler = {
+  activate(event, uri, range) {
+    openInAppBrowser(uri);
+  },
+  hover(event, uri, range) {}, // optional
+  leave(event, uri, range) {}, // optional
+};
+```
+
+Custom providers registered with `registerLinkProvider` are unaffected.
+
+### Mouse
+
+When the running program enables mouse tracking (vim, `less --mouse`, htop, tmux...), mouse and wheel input go to the program only: the wheel doesn't scroll the viewport and dragging doesn't select text. Hold **Shift** to bypass it: Shift+drag selects, Shift+wheel scrolls the scrollback, and nothing is reported to the program. Link clicks also require Shift while the program tracks the mouse.
+
 ## Development
 
 ghostty-web builds from Ghostty's source with a [patch](./patches/ghostty-wasm-api.patch) to expose additional

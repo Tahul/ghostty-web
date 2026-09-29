@@ -152,6 +152,7 @@ export class Terminal implements ITerminalCore {
       convertEol: options.convertEol ?? false,
       disableStdin: options.disableStdin ?? false,
       smoothScrollDuration: options.smoothScrollDuration ?? 100, // Default: 100ms smooth scroll
+      linkHandler: options.linkHandler ?? null,
     };
 
     // Wrap in Proxy to intercept runtime changes (xterm.js compatibility)
@@ -1416,16 +1417,23 @@ export class Terminal implements ITerminalCore {
     this.linkDetector
       .getLinkAt(x, bufferRow)
       .then((link) => {
+        // Cache invalidation (e.g. on write) recreates link objects; treat an
+        // identical link as the same one so hover/leave don't flap
+        if (link && this.currentHoveredLink && isSameLink(link, this.currentHoveredLink)) {
+          this.currentHoveredLink = link;
+          return;
+        }
+
         // Update hover state for cursor changes and click handling
         if (link !== this.currentHoveredLink) {
           // Notify old link we're leaving
-          this.currentHoveredLink?.hover?.(false);
+          this.currentHoveredLink?.hover?.(false, e);
 
           // Update current link
           this.currentHoveredLink = link;
 
           // Notify new link we're entering
-          link?.hover?.(true);
+          link?.hover?.(true, e);
 
           // Update cursor style on both container and canvas
           const cursorStyle = link ? 'pointer' : 'text';
@@ -1474,7 +1482,7 @@ export class Terminal implements ITerminalCore {
   /**
    * Handle mouse leave to clear link hover
    */
-  private handleMouseLeave = (): void => {
+  private handleMouseLeave = (e: MouseEvent): void => {
     // Clear hyperlink underline
     if (this.renderer && this.wasmTerm) {
       const previousHyperlinkId = (this.renderer as any).hoveredHyperlinkId || 0;
@@ -1489,7 +1497,7 @@ export class Terminal implements ITerminalCore {
 
     if (this.currentHoveredLink) {
       // Notify link we're leaving
-      this.currentHoveredLink.hover?.(false);
+      this.currentHoveredLink.hover?.(false, e);
 
       // Clear hovered link
       this.currentHoveredLink = undefined;
@@ -1511,6 +1519,12 @@ export class Terminal implements ITerminalCore {
     // For more reliable clicking, detect the link at click time
     // rather than relying on cached hover state (avoids async races)
     if (!this.canvas || !this.renderer || !this.linkDetector || !this.wasmTerm) return;
+
+    // While the app tracks the mouse, clicks belong to the app unless Shift is held
+    if (this.wasmTerm.hasMouseTracking() && !e.shiftKey) return;
+
+    // Don't activate links at the end of a drag-selection or on double/triple-click
+    if (e.detail > 1 || this.selectionManager?.hasSelection()) return;
 
     // Get click position
     const rect = this.canvas.getBoundingClientRect();
@@ -1544,8 +1558,8 @@ export class Terminal implements ITerminalCore {
       // Activate link
       link.activate(e);
 
-      // Prevent default action if modifier key held
-      if (e.ctrlKey || e.metaKey) {
+      // Prevent default action if modifier key held or an embedder handles links
+      if (e.ctrlKey || e.metaKey || this.options.linkHandler) {
         e.preventDefault();
       }
     }
@@ -1557,12 +1571,28 @@ export class Terminal implements ITerminalCore {
   private handleWheel = (e: WheelEvent): void => {
     // Always prevent default browser scrolling
     e.preventDefault();
-    e.stopPropagation();
+
+    // When the app tracks the mouse, the wheel belongs to it (InputHandler
+    // reports it) unless Shift is held, which gives the wheel back to the
+    // terminal UI (scrollback). Only stop propagation when we own the event,
+    // so the InputHandler's listener still sees app-owned wheel events.
+    const appOwnsWheel = !e.shiftKey && (this.wasmTerm?.hasMouseTracking() ?? false);
+    if (!appOwnsWheel) {
+      e.stopPropagation();
+    }
 
     // Allow custom handler to override
     if (this.customWheelEventHandler && this.customWheelEventHandler(e)) {
+      e.stopPropagation();
       return;
     }
+
+    if (appOwnsWheel) {
+      return;
+    }
+
+    // Browsers (notably macOS) turn Shift+wheel into horizontal scrolling
+    const deltaY = e.shiftKey && e.deltaY === 0 ? e.deltaX : e.deltaY;
 
     // Check if in alternate screen mode (vim, less, htop, etc.)
     const isAltScreen = this.wasmTerm?.isAlternateScreen() ?? false;
@@ -1571,8 +1601,8 @@ export class Terminal implements ITerminalCore {
       // Alternate screen: send arrow keys to the application
       // Applications like vim handle scrolling internally
       // Standard: ~3 arrow presses per wheel "click"
-      const direction = e.deltaY > 0 ? 'down' : 'up';
-      const count = Math.min(Math.abs(Math.round(e.deltaY / 33)), 5); // Cap at 5
+      const direction = deltaY > 0 ? 'down' : 'up';
+      const count = Math.min(Math.abs(Math.round(deltaY / 33)), 5); // Cap at 5
 
       for (let i = 0; i < count; i++) {
         if (direction === 'up') {
@@ -1590,16 +1620,16 @@ export class Terminal implements ITerminalCore {
         // Pixel mode (trackpads): convert pixels to lines
         // Use actual line height from renderer for accurate conversion
         const lineHeight = this.renderer?.getMetrics()?.height ?? 20;
-        deltaLines = e.deltaY / lineHeight;
+        deltaLines = deltaY / lineHeight;
       } else if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
         // Line mode (some mice): use directly
-        deltaLines = e.deltaY;
+        deltaLines = deltaY;
       } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
         // Page mode (rare): convert pages to lines
-        deltaLines = e.deltaY * this.rows;
+        deltaLines = deltaY * this.rows;
       } else {
         // Fallback: assume pixel mode with legacy divisor
-        deltaLines = e.deltaY / 33;
+        deltaLines = deltaY / 33;
       }
 
       // Use smooth scrolling for any amount (no rounding needed)
@@ -1913,4 +1943,19 @@ export class Terminal implements ITerminalCore {
     this.assertOpen();
     return this.wasmTerm!.hasMouseTracking();
   }
+}
+
+/**
+ * Whether two links cover the same text and range
+ */
+function isSameLink(a: ILink, b: ILink): boolean {
+  const ra = a.range;
+  const rb = b.range;
+  return (
+    a.text === b.text &&
+    ra.start.x === rb.start.x &&
+    ra.start.y === rb.start.y &&
+    ra.end.x === rb.end.x &&
+    ra.end.y === rb.end.y
+  );
 }

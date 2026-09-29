@@ -11,6 +11,7 @@
  */
 
 import type { IBufferRange, ILink, ILinkProvider } from '../types';
+import { type ITerminalWithLinkHandler, createBuiltinLink } from './builtin-link';
 
 /**
  * OSC 8 Hyperlink Provider
@@ -96,16 +97,7 @@ export class OSC8LinkProvider implements ILinkProvider {
           end: { x: endX, y },
         };
 
-        links.push({
-          text: uri,
-          range,
-          activate: (event) => {
-            // Open link if Ctrl/Cmd is pressed
-            if (event.ctrlKey || event.metaKey) {
-              window.open(uri, '_blank', 'noopener,noreferrer');
-            }
-          },
-        });
+        links.push(createBuiltinLink(this.terminal, uri, range));
       }
     }
 
@@ -232,7 +224,7 @@ export class OSC8LinkProvider implements ILinkProvider {
 /**
  * Minimal terminal interface required by OSC8LinkProvider
  */
-export interface ITerminalForOSC8Provider {
+export interface ITerminalForOSC8Provider extends ITerminalWithLinkHandler {
   buffer: {
     active: {
       length: number;
