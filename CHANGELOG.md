@@ -1,14 +1,14 @@
 # Changelog
 
-## [0.5.0-rc.0](https://github.com/coder/ghostty-web/compare/v0.4.0...v0.5.0-rc.0) (2026-06-28)
+## [0.5.0](https://github.com/Tahul/ghostty-web/compare/v0.4.0...v0.5.0) (2026-09-29)
 
-WASM patpty parrender scMouse tracking improvements user-facissxterthe.minor and patch fixes.
+First release published as `@tahul/ghostty-web`. Adds mouse tracking, OSC 8 hyperlink clicking and selection improvements, plus WASM patch, PTY, rendering and input fixes.
 
 **Highlights**
 
-- Fixed scrolled rows not being cleared in the WASM grid patpatpatpatch, eliminating stale cell on scroll. (#180)
+- Fixed scrolled rows not being cleared in the WASM grid patch, eliminating stale cells on scroll. (#180)
 - Resolved a terminal crash when resizing during high-output programs. (#132)
-- Block click on OSC 8 hyperlinks with the Cmd/Ctrl modifier. (#117)
+- Enabled clicking OSC 8 hyperlinks with the Cmd/Ctrl modifier. (#117)
 - Added mouse tracking support so interactive terminal applications receive mouse events. (#106)
 - Added triple-click word/line selection and other selection improvements. (#115)
 
