@@ -181,6 +181,7 @@ export class InputHandler {
   private onKeyCallback?: (keyEvent: IKeyEvent) => void;
   private customKeyEventHandler?: (event: KeyboardEvent) => boolean;
   private getModeCallback?: (mode: number) => boolean;
+  private syncEncoderCallback?: (encoder: KeyEncoder) => void;
   private onCopyCallback?: () => boolean;
   private mouseConfig?: MouseTrackingConfig;
   private keydownListener: ((e: KeyboardEvent) => void) | null = null;
@@ -220,6 +221,9 @@ export class InputHandler {
    * @param onCopy - Optional callback to handle copy (Cmd+C/Ctrl+C with selection)
    * @param inputElement - Optional input element for beforeinput events
    * @param mouseConfig - Optional mouse tracking configuration
+   * @param syncEncoder - Optional callback setting the key encoder's options from the
+   *   terminal's state before each key (see KeyEncoder.syncFromTerminal); without it
+   *   only the application cursor mode (via getMode) is applied
    */
   constructor(
     ghostty: Ghostty,
@@ -231,9 +235,11 @@ export class InputHandler {
     getMode?: (mode: number) => boolean,
     onCopy?: () => boolean,
     inputElement?: HTMLElement,
-    mouseConfig?: MouseTrackingConfig
+    mouseConfig?: MouseTrackingConfig,
+    syncEncoder?: (encoder: KeyEncoder) => void
   ) {
     this.encoder = ghostty.createKeyEncoder();
+    this.syncEncoderCallback = syncEncoder;
     this.container = container;
     this.inputElement = inputElement;
     this.onDataCallback = onData;
@@ -515,8 +521,10 @@ export class InputHandler {
     // For non-printable keys or keys with modifiers, encode using Ghostty
     try {
       // Sync encoder options with terminal mode state
-      // Mode 1 (DECCKM) controls whether arrow keys send CSI or SS3 sequences
-      if (this.getModeCallback) {
+      if (this.syncEncoderCallback) {
+        this.syncEncoderCallback(this.encoder);
+      } else if (this.getModeCallback) {
+        // Mode 1 (DECCKM) controls whether arrow keys send CSI or SS3 sequences
         const appCursorMode = this.getModeCallback(1);
         this.encoder.setOption(KeyEncoderOption.CURSOR_KEY_APPLICATION, appCursorMode);
       }

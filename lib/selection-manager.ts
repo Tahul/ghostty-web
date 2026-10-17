@@ -261,6 +261,7 @@ export class SelectionManager {
   selectAll(): void {
     const dims = this.wasmTerm.getDimensions();
     const viewportY = this.getViewportY();
+    this.markCurrentSelectionDirty();
     this.selectionStart = { col: 0, absoluteRow: viewportY };
     this.selectionEnd = { col: dims.cols - 1, absoluteRow: viewportY + dims.rows - 1 };
     this.requestRender();
@@ -292,6 +293,7 @@ export class SelectionManager {
 
     // Convert viewport rows to absolute rows
     const viewportY = this.getViewportY();
+    this.markCurrentSelectionDirty();
     this.selectionStart = { col: column, absoluteRow: viewportY + row };
     this.selectionEnd = { col: endCol, absoluteRow: viewportY + endRow };
     this.requestRender();
@@ -315,6 +317,7 @@ export class SelectionManager {
     }
 
     // Convert viewport rows to absolute rows
+    this.markCurrentSelectionDirty();
     this.selectionStart = { col: 0, absoluteRow: this.viewportRowToAbsolute(start) };
     this.selectionEnd = { col: dims.cols - 1, absoluteRow: this.viewportRowToAbsolute(end) };
     this.requestRender();
@@ -610,6 +613,7 @@ export class SelectionManager {
 
         if (word) {
           const absoluteRow = this.viewportRowToAbsolute(cell.row);
+          this.markCurrentSelectionDirty();
           this.selectionStart = { col: word.startCol, absoluteRow };
           this.selectionEnd = { col: word.endCol, absoluteRow };
           this.requestRender();
@@ -651,6 +655,7 @@ export class SelectionManager {
         // Only select if line has content (endCol >= 0)
         if (endCol >= 0) {
           // Select line content only (not trailing whitespace)
+          this.markCurrentSelectionDirty();
           this.selectionStart = { col: 0, absoluteRow };
           this.selectionEnd = { col: endCol, absoluteRow };
           this.requestRender();

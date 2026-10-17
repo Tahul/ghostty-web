@@ -6,7 +6,8 @@
 
 - Migrate from xterm by changing your import: `@xterm/xterm` → `ghostty-web`
 - WASM-compiled parser from Ghostty—the same code that runs the native app
-- Zero runtime dependencies, ~400KB WASM bundle
+- Zero runtime dependencies, ~600KB WASM bundle
+- GPU rendering with WebGL2, Canvas2D when WebGL2 isn't there
 
 Originally created for [Mux](https://github.com/coder/mux) (a desktop app for isolated, parallel agentic development), but designed to be used anywhere.
 
@@ -89,36 +90,55 @@ When the running program enables mouse tracking (vim, `less --mouse`, htop, tmux
 
 ### Rendering
 
-The canvas is redrawn only when something changed: output, a resize, scrolling, a selection or link-hover change, a cursor blink. An idle terminal draws no frames. Only changed rows are redrawn; printable ASCII of one style is drawn one run per `fillText`, with ligatures and kerning off so it matches cell-by-cell drawing.
+Frames are drawn by the GPU through WebGL2: each cell is an instanced quad, glyphs come from a texture atlas rasterized once per glyph, and only the rows that changed are rebuilt and copied to the screen. All terminals on a page share one WebGL context (browsers cap them, 16 in Chrome) and one atlas per font. Without WebGL2 (or with software-only WebGL), and while a lost WebGL context is being restored, the same terminal draws with Canvas2D instead.
+
+Either way, a frame is drawn only when something changed: output, a resize, scrolling, a selection or link-hover change, a cursor blink. An idle terminal draws no frames.
+
+```javascript
+const term = new Terminal({
+  renderer: 'webgl', // default; 'canvas' always draws with Canvas2D
+  customGlyphs: true, // default: box drawing & co. drawn as shapes, see below
+  lowLatency: false, // true: desynchronized canvas, lower latency, may tear
+});
+```
+
+These are read by `open()`. With `lowLatency`, the browser can show frames without waiting for the page compositor (`desynchronized` canvas), at the risk of tearing.
 
 ### Custom glyphs
 
-`drawGlyph` draws glyphs the font should not, such as box drawing that must fill its cell. It gets the canvas context (scaled to CSS pixels), the cell, its box and its color, with the font and alpha already set; return `true` when it drew the glyph, `false` to fall back to text. It is not called for blank cells nor for printable ASCII drawn in runs, and is read by `open()`:
+Box drawing (U+2500-257F), block elements and shades (U+2580-259F), braille (U+2800-28FF) and Powerline triangles and half circles (U+E0B0-E0B7) are drawn as shapes on whole device pixels, so lines join across cells whatever the font and the pixel ratio. Set `customGlyphs: false` to draw them with the font.
+
+`drawGlyph` draws other glyphs yourself (symbols the font lacks, icons). It gets a canvas context (scaled to CSS pixels), the cell, its box and its color, with the font and alpha already set; return `true` when it drew the glyph, `false` to fall back to the built-in drawing. It is read by `open()`:
 
 ```javascript
 const term = new Terminal({
   drawGlyph(ctx, cell, x, y, width, height, color) {
-    if (cell.codepoint !== 0x2500) return false; // ─
-    ctx.fillRect(x, y + height / 2, width, 1);
+    if (cell.codepoint !== 0xe0a0) return false; // Powerline branch symbol
+    ctx.fillRect(x + width / 3, y + height / 4, width / 3, height / 2);
     return true;
   },
 });
 ```
 
+With WebGL, a glyph is drawn once (per codepoint, bold/italic and cell width), in white, and tinted per cell; glyphs drawn in other colors keep them. The drawing must therefore depend only on those, not on the cell's position or colors. With Canvas2D it is called for each non-blank cell drawn, except printable ASCII drawn in runs.
+
+### Output and flow control
+
+`write(data, callback)` parses small writes at once. Bigger ones are parsed in slices of about 8 ms between frames, so a flood of output never freezes the page; `callback` runs once `data` is parsed. Use it for backpressure: stop reading from the source while too much is in flight. The demo pauses its PTY above 512 KB unparsed and resumes below 128 KB, the client acknowledging every 32 KB parsed.
+
+`scrollback` (default 10000) is a number of lines. The terminal drops scrollback a page at a time, so slightly fewer lines than that can be kept.
+
 ## Development
 
-ghostty-web builds from Ghostty's source with a [patch](./patches/ghostty-wasm-api.patch) to expose additional
-functionality.
+ghostty-web builds [libghostty-vt](https://mitchellh.com/writing/libghostty-is-coming), Ghostty's terminal core, to WebAssembly straight from upstream Ghostty (the `ghostty` submodule), with no patches. It drives its C API: the render state for drawing, grid references for scrollback, effects for query replies, bell, title and synchronized output.
 
-> Requires Zig and Bun.
+> Requires Zig 0.16 and Bun.
 
 ```bash
 bun run build
 ```
 
-Mitchell Hashimoto (author of Ghostty) has [been working](https://mitchellh.com/writing/libghostty-is-coming) on `libghostty` which makes this all possible. The patches are very minimal thanks to the work the Ghostty team has done, and we expect them to get smaller.
-
-This library will eventually consume a native Ghostty WASM distribution once available, and will continue to provide an xterm.js compatible API.
+Mitchell Hashimoto (author of Ghostty) and the Ghostty team built libghostty-vt, which makes this all possible.
 
 At Coder we're big fans of Ghostty, so kudos to that team for all the amazing work.
 

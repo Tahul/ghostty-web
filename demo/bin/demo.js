@@ -25,6 +25,7 @@ import {
   validateTokenRequest,
   validateWebSocketRequest,
 } from './auth.js';
+import { createPtyOutput } from './pty-stream.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -297,14 +298,31 @@ const HTML_TEMPLATE = `<!doctype html>
         }
 
         setStatus('connecting', 'Connecting...');
-        ws = new WebSocket(buildWebSocketUrl(token));
+        const socket = new WebSocket(buildWebSocketUrl(token));
+        ws = socket;
+        // Shell output arrives as bytes (server notices as text)
+        socket.binaryType = 'arraybuffer';
 
-        ws.onopen = () => {
+        socket.onopen = () => {
           setStatus('connected', 'Connected');
         };
 
-        ws.onmessage = (event) => {
-          term.write(event.data);
+        // Acknowledge output once parsed: the server pauses the shell while
+        // too much is unacknowledged, instead of queueing a flood
+        let parsedBytes = 0;
+        socket.onmessage = (event) => {
+          if (typeof event.data === 'string') {
+            term.write(event.data);
+            return;
+          }
+          const bytes = new Uint8Array(event.data);
+          term.write(bytes, () => {
+            parsedBytes += bytes.length;
+            if (parsedBytes >= 32768 && socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({ type: 'ack', bytes: parsedBytes }));
+              parsedBytes = 0;
+            }
+          });
         };
 
         ws.onclose = () => {
@@ -518,6 +536,8 @@ function createPtySession(cols, rows) {
     cols: cols,
     rows: rows,
     cwd: homedir(),
+    // Raw bytes: sent as binary messages, no decoding here or re-encoding in the browser
+    encoding: null,
     env: {
       ...process.env,
       TERM: 'xterm-256color',
@@ -597,16 +617,21 @@ wss.on('connection', (ws, req) => {
 
   // Create PTY
   const ptyProcess = createPtySession(cols, rows);
-  sessions.set(ws, { pty: ptyProcess });
 
-  // PTY -> WebSocket
-  ptyProcess.onData((data) => {
-    if (ws.readyState === ws.OPEN) {
-      ws.send(data);
-    }
+  // PTY -> WebSocket: binary messages, batched, paused while the browser lags behind
+  const output = createPtyOutput({
+    send: (chunk) => {
+      if (ws.readyState === ws.OPEN) ws.send(chunk, { binary: true });
+    },
+    pause: () => ptyProcess.pause(),
+    resume: () => ptyProcess.resume(),
   });
+  sessions.set(ws, { pty: ptyProcess, output });
+  ptyProcess.onData((data) => output.push(data));
 
   ptyProcess.onExit(({ exitCode }) => {
+    output.flush();
+    output.dispose();
     if (ws.readyState === ws.OPEN) {
       ws.send(`\r\n\x1b[33mShell exited (code: ${exitCode})\x1b[0m\r\n`);
       ws.close();
@@ -617,12 +642,16 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (data) => {
     const message = data.toString('utf8');
 
-    // Check for resize message
+    // Check for control messages: resize, and acknowledgements of parsed output
     if (message.startsWith('{')) {
       try {
         const msg = JSON.parse(message);
         if (msg.type === 'resize') {
           ptyProcess.resize(msg.cols, msg.rows);
+          return;
+        }
+        if (msg.type === 'ack') {
+          output.ack(msg.bytes);
           return;
         }
       } catch (e) {
@@ -637,6 +666,7 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     const session = sessions.get(ws);
     if (session) {
+      session.output.dispose();
       session.pty.kill();
       sessions.delete(ws);
     }

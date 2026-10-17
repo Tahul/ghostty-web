@@ -1,10 +1,11 @@
 /**
- * Renderer cost on the happy-dom canvas mock (`bun bench/render.ts`).
+ * Canvas2D renderer cost on the happy-dom canvas mock (`bun bench/render.ts`).
  *
  * The mock's drawing calls are no-ops, so the timings are the JS side of a
  * frame (cell parsing, run building, style strings); canvas calls are
  * counted instead. Measures a full redraw at 120x40 and 200x60, frames and
  * canvas calls while idle (cursor blink off and on), and write throughput.
+ * The WebGL renderer needs a browser: see bench/renderers.html.
  */
 import '../happydom';
 import { Ghostty, Terminal } from '../lib';
@@ -68,7 +69,7 @@ function open(
 ): Terminal {
   const container = document.createElement('div');
   document.body.appendChild(container);
-  const term = new Terminal({ ghostty, cols, rows, cursorBlink, theme });
+  const term = new Terminal({ ghostty, cols, rows, cursorBlink, theme, renderer: 'canvas' });
   term.open(container);
   return term;
 }

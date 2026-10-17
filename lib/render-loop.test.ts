@@ -1,6 +1,7 @@
 /**
  * Render scheduling and drawing tests: frames only when something changed,
- * one viewport parse per write, and the canvas calls a frame makes.
+ * only changed rows copied out of the render state, and the canvas calls a
+ * frame makes.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -248,6 +249,8 @@ describe('drawGlyph option', () => {
     term = await createIsolatedTerminal({
       cols: 20,
       rows: 4,
+      // Box drawing would otherwise be drawn as shapes, not text
+      customGlyphs: false,
       drawGlyph: (_ctx, cell: GhosttyCell, x, _y, _w, _h, color) => {
         seen.push({ codepoint: cell.codepoint, x, color });
         return cell.codepoint === 0x2500;
@@ -264,6 +267,61 @@ describe('drawGlyph option', () => {
       { codepoint: 0x2502, x: width, color: expect.stringMatching(/^rgb\(/) },
     ]);
     expect(calls.filter((c) => c.op === 'fillText').map((c) => c.args[0])).toEqual(['│', 'A']);
+  });
+});
+
+describe('Canvas sizing and built-in glyphs', () => {
+  let term: Terminal;
+  let container: HTMLElement;
+
+  async function open(options: Record<string, unknown> = {}): Promise<Terminal> {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    term = await createIsolatedTerminal({ cols: 20, rows: 6, ...options });
+    term.open(container);
+    (term as any).cancelRenderLoop();
+    return term;
+  }
+
+  afterEach(() => {
+    term?.dispose();
+    container?.remove();
+  });
+
+  test('box drawing, blocks and braille are drawn as shapes, not text', async () => {
+    await open();
+    term.write('─│█⣿A');
+    const calls = record(term);
+    renderNow(term, true);
+    expect(calls.filter((c) => c.op === 'fillText').map((c) => c.args[0])).toEqual(['A']);
+    // In the text color: two arms each for ─ and │, one block, eight braille dots
+    const shapes = calls.filter((c) => c.op === 'fillRect' && /^rgb\(/.test(String(c.fill)));
+    expect(shapes).toHaveLength(13);
+  });
+
+  test('fractional pixel ratios size the canvas in whole pixels, once', async () => {
+    const original = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio');
+    Object.defineProperty(window, 'devicePixelRatio', { value: 1.1, configurable: true });
+    try {
+      await open({ renderer: 'canvas' });
+    } finally {
+      if (original) Object.defineProperty(window, 'devicePixelRatio', original);
+      else Reflect.deleteProperty(window, 'devicePixelRatio');
+    }
+    const renderer = (term as any).renderer;
+    const canvas = renderer.getCanvas();
+    expect(Number.isInteger(canvas.width) && Number.isInteger(canvas.height)).toBe(true);
+    let resizes = 0;
+    const resize = renderer.resize.bind(renderer);
+    renderer.resize = (...args: [number, number]) => {
+      resizes++;
+      resize(...args);
+    };
+    term.write('a');
+    renderNow(term);
+    term.write('b');
+    renderNow(term);
+    expect(resizes).toBe(0);
   });
 });
 
@@ -284,24 +342,26 @@ describe('Viewport reads', () => {
     container?.remove();
   });
 
-  test('the viewport is parsed once per write, not once per row', () => {
+  test('an update copies only the rows that changed, once', () => {
     const wasm = (term as any).wasmTerm;
+    term.write('one\r\ntwo');
+    wasm.update();
+    wasm.markClean();
     const exports = wasm.exports;
-    const original = exports.ghostty_render_state_get_viewport;
-    let parses = 0;
+    const cellsRaw = wasm.layout.row.CELLS_RAW;
+    let rowsCopied = 0;
     wasm.exports = {
       ...exports,
-      ghostty_render_state_get_viewport: (...args: unknown[]) => {
-        parses++;
-        return original(...args);
+      ghostty_render_state_row_get: (iterator: number, data: number, out: number) => {
+        if (data === cellsRaw) rowsCopied++;
+        return exports.ghostty_render_state_row_get(iterator, data, out);
       },
     };
-    term.write('one\r\ntwo');
-    for (let y = 0; y < 6; y++) wasm.getLine(y);
-    expect(parses).toBe(1);
     term.write('!');
+    for (let y = 0; y < 6; y++) wasm.getLine(y);
+    expect(rowsCopied).toBe(1);
     expect(wasm.getLine(1).map((c: GhosttyCell) => c.codepoint)[3]).toBe(0x21);
-    expect(parses).toBe(2);
+    expect(rowsCopied).toBe(1);
   });
 
   test('getLine returns copies', () => {
@@ -319,9 +379,9 @@ describe('Viewport reads', () => {
     let allocs = 0;
     wasm.exports = {
       ...exports,
-      ghostty_wasm_alloc_u8_array: (...args: unknown[]) => {
+      ghostty_wasm_alloc: (...args: unknown[]) => {
         allocs++;
-        return exports.ghostty_wasm_alloc_u8_array(...args);
+        return exports.ghostty_wasm_alloc(...args);
       },
     };
     term.write('\r\x1b[Kéà 日本 🎉');

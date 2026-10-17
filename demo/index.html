@@ -228,16 +228,32 @@
         }
 
         updateConnectionStatus(false, 'Connecting...');
-        ws = new WebSocket(buildWebSocketUrl(token));
+        const socket = new WebSocket(buildWebSocketUrl(token));
+        ws = socket;
+        // Shell output arrives as bytes (server notices as text)
+        socket.binaryType = 'arraybuffer';
 
-        ws.onopen = () => {
+        socket.onopen = () => {
           console.log('WebSocket connected');
           updateConnectionStatus(true);
         };
 
-        ws.onmessage = (event) => {
-          // Server sends raw strings, not JSON
-          term.write(event.data);
+        // Acknowledge output once parsed: the server pauses the shell while
+        // too much is unacknowledged, instead of queueing a flood
+        let parsedBytes = 0;
+        socket.onmessage = (event) => {
+          if (typeof event.data === 'string') {
+            term.write(event.data);
+            return;
+          }
+          const bytes = new Uint8Array(event.data);
+          term.write(bytes, () => {
+            parsedBytes += bytes.length;
+            if (parsedBytes >= 32768 && socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({ type: 'ack', bytes: parsedBytes }));
+              parsedBytes = 0;
+            }
+          });
         };
 
         ws.onerror = (error) => {

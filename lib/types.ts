@@ -4,87 +4,6 @@
  */
 
 // ============================================================================
-// SGR (Select Graphic Rendition) Types
-// ============================================================================
-
-/**
- * SGR attribute tags - identifies the type of attribute
- * From include/ghostty/vt/sgr.h
- */
-export enum SgrAttributeTag {
-  UNSET = 0,
-  UNKNOWN = 1,
-  BOLD = 2,
-  RESET_BOLD = 3,
-  ITALIC = 4,
-  RESET_ITALIC = 5,
-  FAINT = 6,
-  RESET_FAINT = 7,
-  UNDERLINE = 8,
-  RESET_UNDERLINE = 9,
-  BLINK = 10,
-  RESET_BLINK = 11,
-  INVERSE = 12,
-  RESET_INVERSE = 13,
-  INVISIBLE = 14,
-  RESET_INVISIBLE = 15,
-  STRIKETHROUGH = 16,
-  RESET_STRIKETHROUGH = 17,
-  FG_8 = 18, // 8-color (0-7)
-  FG_16 = 19, // 16-color (0-15)
-  FG_256 = 20, // 256-color palette
-  FG_RGB = 21, // RGB color
-  FG_DEFAULT = 22, // Reset to default
-  BG_8 = 23, // Background 8-color
-  BG_16 = 24, // Background 16-color
-  BG_256 = 25, // Background 256-color
-  BG_RGB = 26, // Background RGB
-  BG_DEFAULT = 27, // Reset background
-  UNDERLINE_COLOR_8 = 28,
-  UNDERLINE_COLOR_16 = 29,
-  UNDERLINE_COLOR_256 = 30,
-  UNDERLINE_COLOR_RGB = 31,
-  UNDERLINE_COLOR_DEFAULT = 32,
-}
-
-export interface RGBColor {
-  r: number;
-  g: number;
-  b: number;
-}
-
-export type SgrAttribute =
-  | { tag: SgrAttributeTag.BOLD }
-  | { tag: SgrAttributeTag.RESET_BOLD }
-  | { tag: SgrAttributeTag.ITALIC }
-  | { tag: SgrAttributeTag.RESET_ITALIC }
-  | { tag: SgrAttributeTag.FAINT }
-  | { tag: SgrAttributeTag.RESET_FAINT }
-  | { tag: SgrAttributeTag.UNDERLINE }
-  | { tag: SgrAttributeTag.RESET_UNDERLINE }
-  | { tag: SgrAttributeTag.BLINK }
-  | { tag: SgrAttributeTag.RESET_BLINK }
-  | { tag: SgrAttributeTag.INVERSE }
-  | { tag: SgrAttributeTag.RESET_INVERSE }
-  | { tag: SgrAttributeTag.INVISIBLE }
-  | { tag: SgrAttributeTag.RESET_INVISIBLE }
-  | { tag: SgrAttributeTag.STRIKETHROUGH }
-  | { tag: SgrAttributeTag.RESET_STRIKETHROUGH }
-  | { tag: SgrAttributeTag.FG_8; color: number }
-  | { tag: SgrAttributeTag.FG_16; color: number }
-  | { tag: SgrAttributeTag.FG_256; color: number }
-  | { tag: SgrAttributeTag.FG_RGB; color: RGBColor }
-  | { tag: SgrAttributeTag.FG_DEFAULT }
-  | { tag: SgrAttributeTag.BG_8; color: number }
-  | { tag: SgrAttributeTag.BG_16; color: number }
-  | { tag: SgrAttributeTag.BG_256; color: number }
-  | { tag: SgrAttributeTag.BG_RGB; color: RGBColor }
-  | { tag: SgrAttributeTag.BG_DEFAULT }
-  | { tag: SgrAttributeTag.UNDERLINE_COLOR_RGB; color: RGBColor }
-  | { tag: SgrAttributeTag.UNDERLINE_COLOR_DEFAULT }
-  | { tag: SgrAttributeTag.UNKNOWN; params: number[] };
-
-// ============================================================================
 // Key Encoder Types
 // ============================================================================
 
@@ -103,15 +22,17 @@ export enum KittyKeyFlags {
 }
 
 /**
- * Key encoder options
+ * Key encoder options (GhosttyKeyEncoderOption). The terminal's modes set most
+ * of them: see KeyEncoder.syncFromTerminal().
  */
 export enum KeyEncoderOption {
-  CURSOR_KEY_APPLICATION = 0, // DEC mode 1
-  KEYPAD_KEY_APPLICATION = 1, // DEC mode 66
-  IGNORE_KEYPAD_WITH_NUMLOCK = 2, // DEC mode 1035
-  ALT_ESC_PREFIX = 3, // DEC mode 1036
-  MODIFY_OTHER_KEYS_STATE_2 = 4, // xterm modifyOtherKeys
-  KITTY_KEYBOARD_FLAGS = 5, // Kitty protocol flags
+  CURSOR_KEY_APPLICATION = 0, // DEC mode 1 (bool)
+  KEYPAD_KEY_APPLICATION = 1, // DEC mode 66 (bool)
+  IGNORE_KEYPAD_WITH_NUMLOCK = 2, // DEC mode 1035 (bool)
+  ALT_ESC_PREFIX = 3, // DEC mode 1036 (bool)
+  KITTY_KEYBOARD_FLAGS = 5, // Kitty protocol flags (KittyKeyFlags)
+  MACOS_OPTION_AS_ALT = 6, // Which macOS Option keys act as Alt (0 none, 1 both, 2 left, 3 right)
+  BACKARROW_KEY_MODE = 7, // DEC mode 67: Backspace sends BS instead of DEL (bool)
 }
 
 /**
@@ -288,39 +209,40 @@ export enum Key {
   F23 = 143,
   F24 = 144,
   F25 = 145,
-  FN_LOCK = 146,
-  PRINT_SCREEN = 147,
-  SCROLL_LOCK = 148,
-  PAUSE = 149,
+  FN = 146,
+  FN_LOCK = 147,
+  PRINT_SCREEN = 148,
+  SCROLL_LOCK = 149,
+  PAUSE = 150,
 
   // Media Keys
-  BROWSER_BACK = 150,
-  BROWSER_FAVORITES = 151,
-  BROWSER_FORWARD = 152,
-  BROWSER_HOME = 153,
-  BROWSER_REFRESH = 154,
-  BROWSER_SEARCH = 155,
-  BROWSER_STOP = 156,
-  EJECT = 157,
-  LAUNCH_APP_1 = 158,
-  LAUNCH_APP_2 = 159,
-  LAUNCH_MAIL = 160,
-  MEDIA_PLAY_PAUSE = 161,
-  MEDIA_SELECT = 162,
-  MEDIA_STOP = 163,
-  MEDIA_TRACK_NEXT = 164,
-  MEDIA_TRACK_PREVIOUS = 165,
-  POWER = 166,
-  SLEEP = 167,
-  AUDIO_VOLUME_DOWN = 168,
-  AUDIO_VOLUME_MUTE = 169,
-  AUDIO_VOLUME_UP = 170,
-  WAKE_UP = 171,
+  BROWSER_BACK = 151,
+  BROWSER_FAVORITES = 152,
+  BROWSER_FORWARD = 153,
+  BROWSER_HOME = 154,
+  BROWSER_REFRESH = 155,
+  BROWSER_SEARCH = 156,
+  BROWSER_STOP = 157,
+  EJECT = 158,
+  LAUNCH_APP_1 = 159,
+  LAUNCH_APP_2 = 160,
+  LAUNCH_MAIL = 161,
+  MEDIA_PLAY_PAUSE = 162,
+  MEDIA_SELECT = 163,
+  MEDIA_STOP = 164,
+  MEDIA_TRACK_NEXT = 165,
+  MEDIA_TRACK_PREVIOUS = 166,
+  POWER = 167,
+  SLEEP = 168,
+  AUDIO_VOLUME_DOWN = 169,
+  AUDIO_VOLUME_MUTE = 170,
+  AUDIO_VOLUME_UP = 171,
+  WAKE_UP = 172,
 
   // Clipboard Keys
-  COPY = 172,
-  CUT = 173,
-  PASTE = 174,
+  COPY = 173,
+  CUT = 174,
+  PASTE = 175,
 }
 
 /**
@@ -354,131 +276,85 @@ export interface KeyEvent {
 // ============================================================================
 
 /**
- * Interface for libghostty-vt WASM exports
+ * The libghostty-vt exports the bindings use (include/ghostty/vt/*.h).
+ *
+ * In wasm32, pointers, size_t, enums and bools are i32 and reach JS as signed
+ * numbers: read pointers with `>>> 0`. A struct passed by value is passed as a
+ * pointer to a copy, and u64 values (raw rows, raw cells) are BigInts.
  */
 export interface GhosttyWasmExports extends WebAssembly.Exports {
   memory: WebAssembly.Memory;
+  __indirect_function_table: WebAssembly.Table;
 
-  // Memory helpers
+  // Memory and ABI (wasm.h, types.h)
+  ghostty_type_json(): number;
+  ghostty_wasm_alloc(len: number): number;
+  ghostty_wasm_free(ptr: number, len: number): void;
   ghostty_wasm_alloc_opaque(): number;
-  ghostty_wasm_free_opaque(ptr: number): void;
-  ghostty_wasm_alloc_u8_array(len: number): number;
-  ghostty_wasm_free_u8_array(ptr: number, len: number): void;
-  ghostty_wasm_alloc_u16_array(len: number): number;
-  ghostty_wasm_free_u16_array(ptr: number, len: number): void;
-  ghostty_wasm_alloc_u8(): number;
-  ghostty_wasm_free_u8(ptr: number): void;
-  ghostty_wasm_alloc_usize(): number;
-  ghostty_wasm_free_usize(ptr: number): void;
+  ghostty_wasm_free_opaque(slot: number): void;
+  ghostty_wasm_take_opaque(slot: number): number;
 
-  // SGR parser
-  ghostty_sgr_new(allocator: number, parserPtrPtr: number): number;
-  ghostty_sgr_free(parser: number): void;
-  ghostty_sgr_reset(parser: number): void;
-  ghostty_sgr_set_params(
-    parser: number,
-    paramsPtr: number,
-    subsPtr: number,
-    paramsLen: number
+  // Terminal (terminal.h)
+  ghostty_terminal_new(allocator: number, outTerminal: number, cols: number, rows: number): number;
+  ghostty_terminal_free(terminal: number): void;
+  ghostty_terminal_reset(terminal: number): void;
+  ghostty_terminal_resize(
+    terminal: number,
+    cols: number,
+    rows: number,
+    cellWidthPx: number,
+    cellHeightPx: number
   ): number;
-  ghostty_sgr_next(parser: number, attrPtr: number): boolean;
-  ghostty_sgr_attribute_tag(attrPtr: number): number;
-  ghostty_sgr_attribute_value(attrPtr: number, tagPtr: number): number;
-  ghostty_wasm_alloc_sgr_attribute(): number;
-  ghostty_wasm_free_sgr_attribute(ptr: number): void;
+  ghostty_terminal_set(terminal: number, option: number, value: number): number;
+  ghostty_terminal_get(terminal: number, data: number, out: number): number;
+  ghostty_terminal_vt_write(terminal: number, data: number, len: number): void;
+  ghostty_terminal_scroll_viewport(terminal: number, behavior: number): void;
+  ghostty_terminal_grid_ref(terminal: number, point: number, outRef: number): number;
 
-  // Key encoder
-  ghostty_key_encoder_new(allocator: number, encoderPtrPtr: number): number;
+  // Grid references (grid_ref.h, screen.h)
+  ghostty_grid_ref_cell(ref: number, outCell: number): number;
+  ghostty_grid_ref_row(ref: number, outRow: number): number;
+  ghostty_grid_ref_graphemes(ref: number, buf: number, bufLen: number, outLen: number): number;
+  ghostty_grid_ref_hyperlink_uri(ref: number, buf: number, bufLen: number, outLen: number): number;
+  ghostty_grid_ref_style(ref: number, outStyle: number): number;
+  ghostty_row_get(row: bigint, data: number, out: number): number;
+
+  // Render state (render.h)
+  ghostty_render_state_new(allocator: number, outState: number): number;
+  ghostty_render_state_free(state: number): void;
+  ghostty_render_state_update(state: number, terminal: number): number;
+  ghostty_render_state_clean(state: number): number;
+  ghostty_render_state_get(state: number, data: number, out: number): number;
+  ghostty_render_state_row_iterator_new(allocator: number, outIterator: number): number;
+  ghostty_render_state_row_iterator_free(iterator: number): void;
+  ghostty_render_state_row_iterator_next_dirty(iterator: number, outY: number): number;
+  ghostty_render_state_row_get(iterator: number, data: number, out: number): number;
+  ghostty_render_state_row_cells_new(allocator: number, outCells: number): number;
+  ghostty_render_state_row_cells_free(cells: number): void;
+  ghostty_render_state_row_cells_select(cells: number, x: number): number;
+  ghostty_render_state_row_cells_get(cells: number, data: number, out: number): number;
+
+  // Key encoding (key/encoder.h, key/event.h)
+  ghostty_key_encoder_new(allocator: number, outEncoder: number): number;
   ghostty_key_encoder_free(encoder: number): void;
-  ghostty_key_encoder_setopt(encoder: number, option: number, valuePtr: number): number;
+  ghostty_key_encoder_setopt(encoder: number, option: number, value: number): void;
+  ghostty_key_encoder_setopt_from_terminal(encoder: number, terminal: number): void;
   ghostty_key_encoder_encode(
     encoder: number,
-    eventPtr: number,
-    bufPtr: number,
-    bufLen: number,
-    writtenPtr: number
+    event: number,
+    outBuf: number,
+    outBufSize: number,
+    outLen: number
   ): number;
-
-  // Key event
-  ghostty_key_event_new(allocator: number, eventPtrPtr: number): number;
+  ghostty_key_event_new(allocator: number, outEvent: number): number;
   ghostty_key_event_free(event: number): void;
   ghostty_key_event_set_action(event: number, action: number): void;
   ghostty_key_event_set_key(event: number, key: number): void;
   ghostty_key_event_set_mods(event: number, mods: number): void;
-  ghostty_key_event_set_utf8(event: number, ptr: number, len: number): void;
-
-  // Terminal lifecycle
-  ghostty_terminal_new(cols: number, rows: number): TerminalHandle;
-  ghostty_terminal_new_with_config(cols: number, rows: number, configPtr: number): TerminalHandle;
-  ghostty_terminal_free(terminal: TerminalHandle): void;
-  ghostty_terminal_resize(terminal: TerminalHandle, cols: number, rows: number): void;
-  ghostty_terminal_write(terminal: TerminalHandle, dataPtr: number, dataLen: number): void;
-
-  // RenderState API - high-performance rendering (ONE call gets ALL data)
-  ghostty_render_state_update(terminal: TerminalHandle): number; // 0=none, 1=partial, 2=full
-  ghostty_render_state_get_cols(terminal: TerminalHandle): number;
-  ghostty_render_state_get_rows(terminal: TerminalHandle): number;
-  ghostty_render_state_get_cursor_x(terminal: TerminalHandle): number;
-  ghostty_render_state_get_cursor_y(terminal: TerminalHandle): number;
-  ghostty_render_state_get_cursor_visible(terminal: TerminalHandle): boolean;
-  ghostty_render_state_get_bg_color(terminal: TerminalHandle): number; // 0xRRGGBB
-  ghostty_render_state_get_fg_color(terminal: TerminalHandle): number; // 0xRRGGBB
-  ghostty_render_state_is_row_dirty(terminal: TerminalHandle, row: number): boolean;
-  ghostty_render_state_mark_clean(terminal: TerminalHandle): void;
-  ghostty_render_state_get_viewport(
-    terminal: TerminalHandle,
-    bufPtr: number,
-    bufLen: number
-  ): number; // Returns total cells written or -1 on error
-  ghostty_render_state_get_grapheme(
-    terminal: TerminalHandle,
-    row: number,
-    col: number,
-    bufPtr: number,
-    bufLen: number
-  ): number; // Returns count of codepoints or -1 on error
-
-  // Terminal modes
-  ghostty_terminal_is_alternate_screen(terminal: TerminalHandle): boolean;
-  ghostty_terminal_has_mouse_tracking(terminal: TerminalHandle): number;
-  ghostty_terminal_get_mode(terminal: TerminalHandle, mode: number, isAnsi: boolean): number;
-
-  // Scrollback API
-  ghostty_terminal_get_scrollback_length(terminal: TerminalHandle): number;
-  ghostty_terminal_get_scrollback_line(
-    terminal: TerminalHandle,
-    offset: number,
-    bufPtr: number,
-    bufLen: number
-  ): number; // Returns cells written or -1 on error
-  ghostty_terminal_get_scrollback_grapheme(
-    terminal: TerminalHandle,
-    offset: number,
-    col: number,
-    bufPtr: number,
-    bufLen: number
-  ): number; // Returns codepoint count or -1 on error
-  ghostty_terminal_is_row_wrapped(terminal: TerminalHandle, row: number): number;
-
-  // Hyperlink API
-  ghostty_terminal_get_hyperlink_uri(
-    terminal: TerminalHandle,
-    row: number,
-    col: number,
-    bufPtr: number,
-    bufLen: number
-  ): number; // Returns bytes written, 0 if no hyperlink, -1 on error
-  ghostty_terminal_get_scrollback_hyperlink_uri(
-    terminal: TerminalHandle,
-    offset: number,
-    col: number,
-    bufPtr: number,
-    bufLen: number
-  ): number; // Returns bytes written, 0 if no hyperlink, -1 on error
-
-  // Response API (for DSR and other terminal queries)
-  ghostty_terminal_has_response(terminal: TerminalHandle): boolean;
-  ghostty_terminal_read_response(terminal: TerminalHandle, bufPtr: number, bufLen: number): number; // Returns bytes written, 0 if no response, -1 on error
+  ghostty_key_event_set_consumed_mods(event: number, mods: number): void;
+  ghostty_key_event_set_composing(event: number, composing: number): void;
+  ghostty_key_event_set_utf8(event: number, utf8: number, len: number): void;
+  ghostty_key_event_set_unshifted_codepoint(event: number, codepoint: number): void;
 }
 
 // ============================================================================
@@ -495,21 +371,28 @@ export enum DirtyState {
 }
 
 /**
- * Cursor state from RenderState (8 bytes packed)
- * Layout: x(u16) + y(u16) + viewport_x(i16) + viewport_y(i16) + visible(bool) + blinking(bool) + style(u8) + _pad(u8)
+ * Cursor state. The renderer draws the cursor at its viewport position, which
+ * is -1 while the viewport is scrolled away from it.
  */
 export interface RenderStateCursor {
+  /** Column in the active area (the bottom screenful). */
   x: number;
+  /** Row in the active area. */
   y: number;
-  viewportX: number; // -1 if not in viewport
+  /** Column in the viewport, or -1 when the cursor is not on screen. */
+  viewportX: number;
+  /** Row in the viewport, or -1 when the cursor is not on screen. */
   viewportY: number;
+  /** Visible per the terminal modes (DECTCEM). */
   visible: boolean;
+  /** Blinking per the terminal modes (DECSCUSR, mode 12). */
   blinking: boolean;
-  style: 'block' | 'underline' | 'bar';
+  /** Shape per DECSCUSR, or the configured default. */
+  style: 'block' | 'underline' | 'bar' | 'block_hollow';
 }
 
 /**
- * Colors from RenderState (12 bytes packed)
+ * The terminal's current default colors (OSC 10/11/12 overrides included).
  */
 export interface RenderStateColors {
   background: RGB;
@@ -518,33 +401,25 @@ export interface RenderStateColors {
 }
 
 /**
- * Size of cursor struct in WASM (8 bytes)
- */
-export const CURSOR_STRUCT_SIZE = 8;
-
-/**
- * Size of colors struct in WASM (12 bytes)
- */
-export const COLORS_STRUCT_SIZE = 12;
-
-/**
- * Terminal configuration (passed to ghostty_terminal_new_with_config)
- * All color values use 0xRRGGBB format. A value of 0 means "use default".
+ * Terminal configuration. Colors are 0xRRGGBB; omitted ones keep
+ * libghostty-vt's defaults.
  */
 export interface GhosttyTerminalConfig {
+  /**
+   * Scrollback lines to keep (0 keeps none). Approximate: libghostty-vt prunes
+   * a page at a time, so a little more is kept.
+   */
   scrollbackLimit?: number;
   fgColor?: number;
   bgColor?: number;
   cursorColor?: number;
-  palette?: number[];
+  /** The 16 ANSI colors; undefined entries keep the default palette's. */
+  palette?: (number | undefined)[];
+  /** Cursor shape restored by DECSCUSR 0 (default: block). */
+  cursorStyle?: 'block' | 'underline' | 'bar';
+  /** Whether that default cursor blinks (default: false). */
+  cursorBlink?: boolean;
 }
-
-/**
- * Size of GhosttyTerminalConfig struct in WASM memory (bytes).
- * Layout: scrollback_limit(u32) + fg_color(u32) + bg_color(u32) + cursor_color(u32) + palette[16](u32*16)
- * Total: 4 + 4 + 4 + 4 + 64 = 80 bytes
- */
-export const GHOSTTY_CONFIG_SIZE = 80;
 
 /**
  * Opaque terminal pointer (WASM memory address)
@@ -552,20 +427,20 @@ export const GHOSTTY_CONFIG_SIZE = 80;
 export type TerminalHandle = number;
 
 /**
- * Cell structure matching ghostty_cell_t in C (16 bytes)
+ * A terminal cell with its colors resolved (palette and defaults applied).
  */
 export interface GhosttyCell {
-  codepoint: number; // u32 (Unicode codepoint - first codepoint of grapheme)
-  fg_r: number; // u8 (foreground red)
-  fg_g: number; // u8 (foreground green)
-  fg_b: number; // u8 (foreground blue)
-  bg_r: number; // u8 (background red)
-  bg_g: number; // u8 (background green)
-  bg_b: number; // u8 (background blue)
-  flags: number; // u8 (style flags bitfield)
-  width: number; // u8 (character width: 1=normal, 2=wide, etc.)
-  hyperlink_id: number; // u16 (0 = no link, >0 = hyperlink ID in set)
-  grapheme_len: number; // u8 (number of extra codepoints beyond first)
+  codepoint: number; // First codepoint of the grapheme (0 = empty)
+  fg_r: number; // Foreground red
+  fg_g: number; // Foreground green
+  fg_b: number; // Foreground blue
+  bg_r: number; // Background red
+  bg_g: number; // Background green
+  bg_b: number; // Background blue
+  flags: number; // CellFlags
+  width: number; // 1 = normal, 2 = wide, 0 = the spacer after a wide character
+  hyperlink_id: number; // 1 inside an OSC 8 hyperlink, else 0 (get the URI by position)
+  grapheme_len: number; // Codepoints beyond the first (combining marks, ZWJ sequences)
 }
 
 /**
@@ -598,15 +473,6 @@ export interface Cursor {
   x: number;
   y: number;
   visible: boolean;
-}
-
-/**
- * Terminal configuration (passed to ghostty_terminal_new_with_config)
- */
-export interface TerminalConfig {
-  scrollback_limit: number; // Number of scrollback lines (default: 10,000)
-  fg_color: RGB; // Default foreground color
-  bg_color: RGB; // Default background color
 }
 
 // ============================================================================
@@ -763,35 +629,4 @@ export class EventEmitter<T> {
   public dispose(): void {
     this.listeners = [];
   }
-}
-
-/**
- * Terminal mode identifiers
- *
- * ANSI modes (use with is_ansi = true):
- * - INSERT = 4
- *
- * DEC modes (use with is_ansi = false):
- * - CURSOR_VISIBLE = 25
- * - MOUSE_TRACKING_NORMAL = 1000
- * - MOUSE_TRACKING_BUTTON = 1002
- * - MOUSE_TRACKING_ANY = 1003
- * - FOCUS_EVENTS = 1004
- * - ALT_SCREEN = 1047
- * - ALT_SCREEN_WITH_CURSOR = 1049
- * - BRACKETED_PASTE = 2004
- */
-export enum TerminalMode {
-  // ANSI modes
-  INSERT = 4,
-
-  // DEC modes
-  CURSOR_VISIBLE = 25,
-  MOUSE_TRACKING_NORMAL = 1000,
-  MOUSE_TRACKING_BUTTON = 1002,
-  MOUSE_TRACKING_ANY = 1003,
-  FOCUS_EVENTS = 1004,
-  ALT_SCREEN = 1047,
-  ALT_SCREEN_WITH_CURSOR = 1049,
-  BRACKETED_PASTE = 2004,
 }

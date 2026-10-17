@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>ghostty-web renderers</title>
+    <style>
+      body {
+        background: #333;
+        color: #ddd;
+        font: 12px monospace;
+        margin: 16px;
+      }
+      h2 {
+        font-size: 12px;
+        margin: 12px 0 4px;
+      }
+      .term {
+        display: inline-block;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>canvas</h2>
+    <div id="canvas"></div>
+    <h2>webgl</h2>
+    <div id="webgl"></div>
+    <h2>difference (red)</h2>
+    <div id="diff"></div>
+    <pre id="out">running…</pre>
+    <script type="module" src="./renderers.ts"></script>
+  </body>
+</html>

@@ -17,7 +17,12 @@
 
 import { BufferNamespace } from './buffer';
 import { EventEmitter } from './event-emitter';
-import type { Ghostty, GhosttyCell, GhosttyTerminal, GhosttyTerminalConfig } from './ghostty';
+import {
+  type Ghostty,
+  type GhosttyCell,
+  type GhosttyTerminal,
+  type GhosttyTerminalConfig,
+} from './ghostty';
 import { getGhostty } from './index';
 import { InputHandler, type MouseTrackingConfig } from './input-handler';
 import type {
@@ -34,9 +39,56 @@ import type {
 import { LinkDetector } from './link-detector';
 import { OSC8LinkProvider } from './providers/osc8-link-provider';
 import { UrlRegexProvider } from './providers/url-regex-provider';
-import { CanvasRenderer } from './renderer';
+import { CanvasRenderer, type RendererOptions } from './renderer';
 import { SelectionManager } from './selection-manager';
 import type { ILink, ILinkProvider } from './types';
+import { WebGLRenderer } from './webgl/webgl-renderer';
+
+/**
+ * Writes up to this many characters or bytes are parsed at once (a few ms at
+ * Ghostty's ~100 MB/s); longer ones are parsed in slices between frames.
+ */
+const WRITE_SYNC_LIMIT = 512 * 1024;
+/** Slice of a long write parsed at a time */
+const WRITE_SLICE_LENGTH = 128 * 1024;
+/** Parsing time per task before yielding to rendering and input */
+const WRITE_SLICE_BUDGET_MS = 8;
+
+/** A write waiting to be parsed: `offset` is where its next slice starts. */
+interface PendingWrite {
+  data: string | Uint8Array;
+  offset: number;
+  callback?: () => void;
+}
+
+function now(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+/**
+ * Runs `task` in a new macrotask, after rendering and input get a chance:
+ * MessageChannel when available (setTimeout is clamped to 4 ms when nested).
+ */
+let taskChannel: MessageChannel | undefined;
+const taskQueue: Array<() => void> = [];
+function scheduleTask(task: () => void): void {
+  if (typeof MessageChannel === 'undefined') {
+    setTimeout(task, 0);
+    return;
+  }
+  if (!taskChannel) {
+    taskChannel = new MessageChannel();
+    taskChannel.port1.onmessage = () => taskQueue.shift()?.();
+    // Node and Bun: an open port must not keep the process alive
+    (taskChannel.port1 as { unref?: () => void }).unref?.();
+  }
+  taskQueue.push(task);
+  taskChannel.port2.postMessage(null);
+}
 
 // ============================================================================
 // Terminal Class
@@ -104,7 +156,9 @@ export class Terminal implements ITerminalCore {
   private animationFrameId?: number;
   /** Between startRenderLoop() and cancelRenderLoop(): requested frames get drawn. */
   private renderLoopActive = false;
-  private writeQueue: Uint8Array[] = [];
+  /** Writes waiting to be parsed, oldest first (see write()) */
+  private pendingWrites: PendingWrite[] = [];
+  private writeTaskScheduled = false;
   private awaitingEcho = false;
 
   // Addons
@@ -136,6 +190,8 @@ export class Terminal implements ITerminalCore {
   private scrollbarVisible: boolean = false;
   private scrollbarOpacity: number = 0;
   private scrollbarHideTimeout?: number;
+  /** Draws a held frame (synchronized output) once its hold times out. */
+  private renderHoldTimeout?: ReturnType<typeof setTimeout>;
   private readonly SCROLLBAR_HIDE_DELAY_MS = 1500; // Hide after 1.5 seconds
   private readonly SCROLLBAR_FADE_DURATION_MS = 200; // 200ms fade animation
 
@@ -159,6 +215,9 @@ export class Terminal implements ITerminalCore {
       smoothScrollDuration: options.smoothScrollDuration ?? 100, // Default: 100ms smooth scroll
       linkHandler: options.linkHandler ?? null,
       drawGlyph: options.drawGlyph,
+      renderer: options.renderer ?? 'webgl',
+      customGlyphs: options.customGlyphs ?? true,
+      lowLatency: options.lowLatency ?? false,
     };
 
     // Wrap in Proxy to intercept runtime changes (xterm.js compatibility)
@@ -191,6 +250,8 @@ export class Terminal implements ITerminalCore {
   public set viewportY(value: number) {
     if (value === this._viewportY) return;
     this._viewportY = value;
+    // The terminal's viewport follows: the renderer draws what it shows
+    this.wasmTerm?.scrollViewport(value);
     this.requestRender();
   }
 
@@ -220,8 +281,11 @@ export class Terminal implements ITerminalCore {
         break;
 
       case 'theme':
-        if (this.renderer) {
-          console.warn('ghostty-web: theme changes after open() are not yet fully supported');
+        if (this.renderer && this.wasmTerm) {
+          // Default colors live in the terminal (programs can query and override them)
+          this.wasmTerm.setColors(this.buildWasmConfig());
+          this.renderer.setTheme(this.options.theme);
+          this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.scrollbarOpacity);
         }
         break;
 
@@ -261,6 +325,7 @@ export class Terminal implements ITerminalCore {
 
     // Resize canvas to match new font metrics (the renderer sizes the canvas, DPI included)
     this.renderer.resize(this.cols, this.rows);
+    this.syncCellSize();
 
     // Force full re-render with new font
     this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.scrollbarOpacity);
@@ -268,10 +333,10 @@ export class Terminal implements ITerminalCore {
 
   /**
    * Parse a CSS color string to 0xRRGGBB format.
-   * Returns 0 if the color is undefined or invalid.
+   * Returns undefined if the color is undefined or invalid.
    */
-  private parseColorToHex(color?: string): number {
-    if (!color) return 0;
+  private parseColorToHex(color?: string): number | undefined {
+    if (!color) return undefined;
 
     // Handle hex colors (#RGB, #RRGGBB)
     if (color.startsWith('#')) {
@@ -280,7 +345,7 @@ export class Terminal implements ITerminalCore {
         hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
       }
       const value = Number.parseInt(hex, 16);
-      return Number.isNaN(value) ? 0 : value;
+      return hex.length === 6 && !Number.isNaN(value) ? value : undefined;
     }
 
     // Handle rgb(r, g, b) format
@@ -292,25 +357,21 @@ export class Terminal implements ITerminalCore {
       return (r << 16) | (g << 8) | b;
     }
 
-    return 0;
+    return undefined;
   }
 
   /**
-   * Convert terminal options to WASM terminal config.
+   * Convert terminal options to WASM terminal config. Theme colors it doesn't
+   * set keep the terminal's defaults.
    */
-  private buildWasmConfig(): GhosttyTerminalConfig | undefined {
+  private buildWasmConfig(): GhosttyTerminalConfig {
     const theme = this.options.theme;
     const scrollback = this.options.scrollback;
-
-    // If no theme and default scrollback, use defaults
-    if (!theme && scrollback === 10000) {
-      return undefined;
-    }
 
     // Build palette array from theme colors
     // Order: black, red, green, yellow, blue, magenta, cyan, white,
     //        brightBlack, brightRed, brightGreen, brightYellow, brightBlue, brightMagenta, brightCyan, brightWhite
-    const palette: number[] = [
+    const palette: (number | undefined)[] = [
       this.parseColorToHex(theme?.black),
       this.parseColorToHex(theme?.red),
       this.parseColorToHex(theme?.green),
@@ -335,7 +396,16 @@ export class Terminal implements ITerminalCore {
       bgColor: this.parseColorToHex(theme?.background),
       cursorColor: this.parseColorToHex(theme?.cursor),
       palette,
+      cursorStyle: this.options.cursorStyle,
+      cursorBlink: this.options.cursorBlink,
     };
+  }
+
+  /** Gives the terminal the cell size in pixels (for size reports: XTWINOPS, mode 2048). */
+  private syncCellSize(): void {
+    if (!this.wasmTerm || !this.renderer) return;
+    const metrics = this.renderer.getMetrics();
+    this.wasmTerm.resize(this.cols, this.rows, metrics.width, metrics.height);
   }
 
   // ==========================================================================
@@ -428,19 +498,26 @@ export class Terminal implements ITerminalCore {
         textarea.focus();
       });
 
-      // Create renderer
-      this.renderer = new CanvasRenderer(this.canvas, {
+      // Create renderer (WebGL falls back to Canvas2D by itself)
+      const rendererOptions: RendererOptions = {
         fontSize: this.options.fontSize,
         fontFamily: this.options.fontFamily,
         cursorStyle: this.options.cursorStyle,
         cursorBlink: this.options.cursorBlink,
         theme: this.options.theme,
         drawGlyph: this.options.drawGlyph,
-      });
+        customGlyphs: this.options.customGlyphs,
+        lowLatency: this.options.lowLatency,
+      };
+      this.renderer =
+        this.options.renderer === 'canvas'
+          ? new CanvasRenderer(this.canvas, rendererOptions)
+          : new WebGLRenderer(this.canvas, rendererOptions);
       this.renderer.setRenderRequester(() => this.requestRender());
 
       // Size canvas to terminal dimensions (use renderer.resize for proper DPI scaling)
       this.renderer.resize(this.cols, this.rows);
+      this.syncCellSize();
 
       // Create mouse tracking configuration
       const canvas = this.canvas;
@@ -492,7 +569,11 @@ export class Terminal implements ITerminalCore {
           return this.copySelection();
         },
         this.textarea,
-        mouseConfig
+        mouseConfig,
+        (encoder) => {
+          // Encode keys per the terminal's modes (DECCKM, keypad, Kitty flags...)
+          if (this.wasmTerm) encoder.syncFromTerminal(this.wasmTerm);
+        }
       );
 
       // Create selection manager (pass textarea for context menu positioning)
@@ -552,7 +633,12 @@ export class Terminal implements ITerminalCore {
   }
 
   /**
-   * Write data to terminal
+   * Write data to terminal.
+   *
+   * Writes up to WRITE_SYNC_LIMIT long are parsed at once; longer ones (and
+   * writes queued behind them) are parsed in slices between frames, so a
+   * flood never blocks rendering or input for long. `callback` runs once the
+   * data is parsed: acknowledge it to the PTY side for flow control.
    */
   write(data: string | Uint8Array, callback?: () => void): void {
     this.assertOpen();
@@ -562,61 +648,138 @@ export class Terminal implements ITerminalCore {
       data = data.replace(/\n/g, '\r\n');
     }
 
-    this.writeInternal(data, callback);
+    if (this.pendingWrites.length === 0 && data.length <= WRITE_SYNC_LIMIT) {
+      this.writeInternal(data);
+      if (callback) queueMicrotask(callback);
+      return;
+    }
+    this.pendingWrites.push({ data, offset: 0, callback });
+    this.scheduleWrites();
+  }
+
+  private scheduleWrites(): void {
+    if (this.writeTaskScheduled) return;
+    this.writeTaskScheduled = true;
+    scheduleTask(this.processPendingWrites);
+  }
+
+  /** Parses queued writes for up to WRITE_SLICE_BUDGET_MS, then yields. */
+  private processPendingWrites = (): void => {
+    this.writeTaskScheduled = false;
+    if (!this.isOpen || this.isDisposed) return;
+    const deadline = now() + WRITE_SLICE_BUDGET_MS;
+    try {
+      while (this.pendingWrites.length > 0) {
+        this.writeNextSlice();
+        if (now() >= deadline) break;
+      }
+    } finally {
+      // A throwing listener must not strand the writes queued behind it
+      if (this.pendingWrites.length > 0) this.scheduleWrites();
+    }
+  };
+
+  /** Parses the next WRITE_SLICE_LENGTH of the oldest queued write. */
+  private writeNextSlice(): void {
+    const entry = this.pendingWrites[0];
+    const { data } = entry;
+    let end = Math.min(data.length, entry.offset + WRITE_SLICE_LENGTH);
+    // Don't split a surrogate pair (the parser splits UTF-8 sequences fine)
+    if (
+      typeof data === 'string' &&
+      end < data.length &&
+      isHighSurrogate(data.charCodeAt(end - 1))
+    ) {
+      end--;
+    }
+    const slice =
+      entry.offset === 0 && end === data.length
+        ? data
+        : typeof data === 'string'
+          ? data.slice(entry.offset, end)
+          : data.subarray(entry.offset, end);
+    entry.offset = end;
+    if (end < data.length) {
+      this.writeInternal(slice);
+      return;
+    }
+    this.pendingWrites.shift();
+    try {
+      this.writeInternal(slice);
+    } finally {
+      // Acknowledged even if a listener fired by this parse throws
+      entry.callback?.();
+    }
+  }
+
+  /** Parses everything queued now: before anything that must see it in order (resize, reset). */
+  private flushPendingWrites(): void {
+    while (this.pendingWrites.length > 0) this.writeNextSlice();
   }
 
   /**
    * Internal write implementation (extracted from write())
    */
-  private writeInternal(data: string | Uint8Array, callback?: () => void): void {
+  private writeInternal(data: string | Uint8Array): void {
     // Note: We intentionally do NOT clear selection on write - most modern terminals
     // preserve selection when new data arrives. Selection is cleared by user actions
     // like clicking or typing, not by incoming data.
 
     // Write directly to WASM terminal (handles VT parsing internally)
-    this.wasmTerm!.write(data);
+    const wasmTerm = this.wasmTerm!;
+    wasmTerm.write(data);
 
     // Process any responses generated by the terminal (e.g., DSR cursor position)
     // These need to be sent back to the PTY via onData
     this.processTerminalResponses();
 
-    // Check for bell character (BEL, \x07)
-    // WASM doesn't expose bell events, so we detect it in the data stream
-    if (typeof data === 'string' && data.includes('\x07')) {
+    // Bells and titles come from the parser: a BEL ending an OSC is no bell
+    if (wasmTerm.takeBells() > 0) {
       this.bellEmitter.fire();
-    } else if (data instanceof Uint8Array && data.includes(0x07)) {
-      this.bellEmitter.fire();
+    }
+    const title = wasmTerm.takeTitleChange();
+    if (title !== null && title !== this.currentTitle) {
+      this.currentTitle = title;
+      this.titleChangeEmitter.fire(title);
     }
 
     // Invalidate cached links on the rows that changed
     this.invalidateChangedLinks();
-    this.requestRender();
 
     // Phase 2: Auto-scroll to bottom on new output (xterm.js behavior)
     if (this.viewportY !== 0) {
       this.scrollToBottom();
     }
 
-    // Check for title changes (OSC 0, 1, 2 sequences)
-    // This is a simplified implementation - Ghostty WASM may provide this
-    if (typeof data === 'string' && data.includes('\x1b]')) {
-      this.checkForTitleChange(data);
+    // A program holding the screen (synchronized output) gets at most
+    // RENDER_HOLD_TIMEOUT_MS before the frame is drawn anyway
+    if (wasmTerm.renderHoldActive) {
+      this.scheduleRenderHoldTimeout();
     }
 
-    // Call callback if provided
-    if (callback) {
-      // Queue callback after next render
-      requestAnimationFrame(callback);
-    }
-
-    if (this.awaitingEcho) {
+    // Draw now rather than on the next animation frame when a keystroke's echo
+    // arrived, or a program finished a synchronized frame (it may start the
+    // next one before that animation frame)
+    const frameFinished = wasmTerm.takeRenderHoldRelease();
+    if ((this.awaitingEcho || frameFinished) && this.renderer) {
       this.awaitingEcho = false;
-      if (this.renderer && this.wasmTerm) {
-        this.renderer.render(this.wasmTerm, false, this.viewportY, this, this.scrollbarOpacity);
-      }
+      this.renderer.render(wasmTerm, false, this.viewportY, this, this.scrollbarOpacity);
     }
+    this.requestRender();
+  }
 
-    // Render will happen on next animation frame
+  /** Requests a frame once a render hold has lasted RENDER_HOLD_TIMEOUT_MS. */
+  private scheduleRenderHoldTimeout(): void {
+    if (this.renderHoldTimeout !== undefined) return;
+    const wasmTerm = this.wasmTerm!;
+    this.renderHoldTimeout = setTimeout(() => {
+      this.renderHoldTimeout = undefined;
+      this.requestRender();
+      // A newer hold than the one this timer was armed for: wait out its time
+      if (!this.isDisposed && wasmTerm.renderHoldActive && wasmTerm.renderHoldRemainingMs > 0) {
+        this.scheduleRenderHoldTimeout();
+      }
+    }, wasmTerm.renderHoldRemainingMs);
   }
 
   /**
@@ -692,6 +855,9 @@ export class Terminal implements ITerminalCore {
       return; // No change
     }
 
+    // Data written before the resize is parsed at the old size
+    this.flushPendingWrites();
+
     // Cancel render loop before resize to prevent accessing detached TypedArray
     // views while WASM reallocates buffers. We restart it after resize completes.
     // This avoids the background-tab regression of using an isResizing flag
@@ -704,10 +870,18 @@ export class Terminal implements ITerminalCore {
       this.rows = rows;
 
       // Resize WASM terminal (may reallocate buffers, invalidating TypedArray views)
-      this.wasmTerm!.resize(cols, rows);
+      const metrics = this.renderer!.getMetrics();
+      this.wasmTerm!.resize(cols, rows, metrics.width, metrics.height);
 
       // Resize renderer (sizes the canvas, DPI included)
       this.renderer!.resize(cols, rows);
+
+      // Reflow changed the scrollback: keep the viewport within it
+      if (this.viewportY > 0) {
+        const scrollback = this.wasmTerm!.getScrollbackLength();
+        this._viewportY = Math.min(this._viewportY, scrollback);
+        this.wasmTerm!.scrollViewport(this._viewportY);
+      }
 
       // Lines rewrap: every cached link may have moved
       this.linkDetector?.invalidateCache();
@@ -721,8 +895,6 @@ export class Terminal implements ITerminalCore {
       console.error('Terminal resize failed:', e);
     }
 
-    // Flush any writes that were queued during resize, then restart render loop
-    this.flushWriteQueue();
     this.startRenderLoop();
   }
 
@@ -731,6 +903,7 @@ export class Terminal implements ITerminalCore {
    */
   clear(): void {
     this.assertOpen();
+    this.flushPendingWrites();
     // Send ANSI clear screen and cursor home sequences
     this.wasmTerm!.write('\x1b[2J\x1b[H');
     this.linkDetector?.invalidateCache();
@@ -742,13 +915,12 @@ export class Terminal implements ITerminalCore {
    */
   reset(): void {
     this.assertOpen();
+    this.flushPendingWrites();
 
-    // Free old WASM terminal and create new one
-    if (this.wasmTerm) {
-      this.wasmTerm.free();
-    }
-    const config = this.buildWasmConfig();
-    this.wasmTerm = this.ghostty!.createTerminal(this.cols, this.rows, config);
+    // Full reset (RIS): screen, scrollback and modes; the configuration stays
+    this.wasmTerm!.reset();
+    this._viewportY = 0;
+    this.targetViewportY = 0;
 
     // Clear renderer
     this.renderer!.clear();
@@ -1116,12 +1288,16 @@ export class Terminal implements ITerminalCore {
 
     // Stop render loop and clear write queue
     this.cancelRenderLoop();
-    this.writeQueue.length = 0;
+    this.pendingWrites = [];
 
     // Stop smooth scroll animation
     if (this.scrollAnimationFrame) {
       cancelAnimationFrame(this.scrollAnimationFrame);
       this.scrollAnimationFrame = undefined;
+    }
+    if (this.renderHoldTimeout !== undefined) {
+      clearTimeout(this.renderHoldTimeout);
+      this.renderHoldTimeout = undefined;
     }
 
     // Clear mouse move throttle timeout
@@ -1177,16 +1353,6 @@ export class Terminal implements ITerminalCore {
       this.animationFrameId = undefined;
       this.renderFrame();
     });
-  }
-
-  /**
-   * Flush any writes that were queued during resize
-   */
-  private flushWriteQueue(): void {
-    while (this.writeQueue.length > 0) {
-      const data = this.writeQueue.shift()!;
-      this.wasmTerm!.write(data);
-    }
   }
 
   /**
@@ -1409,35 +1575,10 @@ export class Terminal implements ITerminalCore {
     const x = Math.floor((e.clientX - rect.left) / this.renderer.charWidth);
     const y = Math.floor((e.clientY - rect.top) / this.renderer.charHeight);
 
-    // Get hyperlink_id directly from the cell at this position
-    // Must account for viewportY (scrollback position)
+    // Get hyperlink_id directly from the cell at this position, as drawn
     const viewportRow = y; // Row in the viewport (0 to rows-1)
     let hyperlinkId = 0;
-
-    // When scrolled, fetch from scrollback or screen based on position
-    // NOTE: viewportY may be fractional during smooth scrolling. The renderer
-    // uses Math.floor(viewportY) when mapping viewport rows to scrollback vs
-    // screen; we mirror that logic here so link hit-testing matches what the
-    // user sees on screen.
-    let line: GhosttyCell[] | null = null;
-    const rawViewportY = this.getViewportY();
-    const viewportY = Math.max(0, Math.floor(rawViewportY));
-    if (viewportY > 0) {
-      const scrollbackLength = this.wasmTerm.getScrollbackLength();
-      if (viewportRow < viewportY) {
-        // Mouse is over scrollback content
-        const scrollbackOffset = scrollbackLength - viewportY + viewportRow;
-        line = this.wasmTerm.getScrollbackLine(scrollbackOffset);
-      } else {
-        // Mouse is over screen content (bottom part of viewport)
-        const screenRow = viewportRow - viewportY;
-        line = this.wasmTerm.getLine(screenRow);
-      }
-    } else {
-      // At bottom - just use screen buffer
-      line = this.wasmTerm.getLine(viewportRow);
-    }
-
+    const line: GhosttyCell[] | null = this.wasmTerm.getViewportRowCells(viewportRow);
     if (line && x >= 0 && x < line.length) {
       hyperlinkId = line[x].hyperlink_id;
     }
@@ -1939,31 +2080,6 @@ export class Terminal implements ITerminalCore {
       // Send response back to the PTY via onData
       // This is the same path as user keyboard input
       this.dataEmitter.fire(response);
-    }
-  }
-
-  /**
-   * Check for title changes in written data (OSC sequences)
-   * Simplified implementation - looks for OSC 0, 1, 2
-   */
-  private checkForTitleChange(data: string): void {
-    // OSC sequences: ESC ] Ps ; Pt BEL or ESC ] Ps ; Pt ST
-    // OSC 0 = icon + title, OSC 1 = icon, OSC 2 = title
-    const oscRegex = /\x1b\]([012]);([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
-    let match: RegExpExecArray | null = null;
-
-    // biome-ignore lint/suspicious/noAssignInExpressions: Standard regex pattern
-    while ((match = oscRegex.exec(data)) !== null) {
-      const ps = match[1];
-      const pt = match[2];
-
-      // OSC 0 and OSC 2 set the title
-      if (ps === '0' || ps === '2') {
-        if (pt !== this.currentTitle) {
-          this.currentTitle = pt;
-          this.titleChangeEmitter.fire(pt);
-        }
-      }
     }
   }
 

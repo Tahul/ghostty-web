@@ -33,10 +33,31 @@ export interface ITerminalOptions {
   linkHandler?: ILinkHandler | null;
 
   /**
-   * Draws glyphs the font should not (box drawing that must fill its cell,
-   * custom symbols): return true when drawn. See GlyphDrawer. Read by open().
+   * Draws glyphs instead of the font (custom symbols): return true when
+   * drawn. See GlyphDrawer. Read by open().
    */
   drawGlyph?: GlyphDrawer;
+
+  /**
+   * How frames are drawn. 'webgl' (default) draws with the GPU through
+   * WebGL2, and with Canvas2D when WebGL2 is unavailable or its context is
+   * lost. 'canvas' always draws with Canvas2D. Read by open().
+   */
+  renderer?: 'webgl' | 'canvas';
+
+  /**
+   * Draw box drawing, block elements, shades, braille and Powerline symbols
+   * as shapes that fill their cell, so they join across cells whatever the
+   * font (default: true). Read by open().
+   */
+  customGlyphs?: boolean;
+
+  /**
+   * Ask the browser for a low-latency canvas (`desynchronized`): frames can
+   * reach the screen sooner, at the risk of tearing (default: false). Read by
+   * open().
+   */
+  lowLatency?: boolean;
 
   // Internal: Ghostty WASM instance (optional, for test isolation)
   // If not provided, uses the module-level instance from init()

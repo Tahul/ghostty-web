@@ -3,11 +3,14 @@ set -euo pipefail
 
 echo "🔨 Building ghostty-vt.wasm..."
 
-# Check for Zig
+# Ghostty states the Zig it needs in build.zig.zon; builds with older or newer
+# minor releases fail in confusing ways, so check up front.
+REQUIRED_ZIG=$(sed -n 's/.*minimum_zig_version = "\([^"]*\)".*/\1/p' ghostty/build.zig.zon 2>/dev/null || true)
+
 if ! command -v zig &> /dev/null; then
     echo "❌ Error: Zig not found"
     echo ""
-    echo "Install Zig 0.15.2+:"
+    echo "Install Zig ${REQUIRED_ZIG:-0.16.0}:"
     echo "  macOS:   brew install zig"
     echo "  Linux:   https://ziglang.org/download/"
     echo ""
@@ -17,40 +20,35 @@ fi
 ZIG_VERSION=$(zig version)
 echo "✓ Found Zig $ZIG_VERSION"
 
-# Initialize/update submodule
-if [ ! -d "ghostty/.git" ]; then
+# Initialize the submodule (ghostty/.git is a file inside a submodule checkout)
+if [ ! -e "ghostty/.git" ]; then
     echo "📦 Initializing Ghostty submodule..."
     git submodule update --init --recursive
-else
-    echo "📦 Ghostty submodule already initialized"
+    REQUIRED_ZIG=$(sed -n 's/.*minimum_zig_version = "\([^"]*\)".*/\1/p' ghostty/build.zig.zon)
 fi
 
-# Apply patch
-echo "🔧 Applying WASM API patch..."
-cd ghostty
-git apply --check ../patches/ghostty-wasm-api.patch || {
-    echo "❌ Patch doesn't apply cleanly"
-    echo "Ghostty may have changed. Check patches/ghostty-wasm-api.patch"
+ZIG_MINOR=$(echo "$ZIG_VERSION" | cut -d. -f1,2)
+REQUIRED_MINOR=$(echo "$REQUIRED_ZIG" | cut -d. -f1,2)
+if [ -n "$REQUIRED_ZIG" ] && [ "$ZIG_MINOR" != "$REQUIRED_MINOR" ]; then
+    echo "❌ Error: Ghostty needs Zig $REQUIRED_MINOR.x (found $ZIG_VERSION)"
     exit 1
-}
-git apply ../patches/ghostty-wasm-api.patch
+fi
 
-# Build WASM
-echo "⚙️  Building WASM (takes ~20 seconds)..."
-zig build lib-vt -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall
+# libghostty-vt features ghostty-web uses: the render state (drawing), input
+# encoding (keyboard) and grid introspection (scrollback reads, hyperlink URIs).
+# Everything else (selection, search, snapshots, formatter...) only adds size.
+VT_FEATURES="-all,+render-state,+input-encode,+grid-introspection"
 
-# Copy to project root
-cd ..
-cp ghostty/zig-out/bin/ghostty-vt.wasm ./
-
-# Revert patch to keep submodule clean
-echo "🧹 Cleaning up..."
+echo "⚙️  Building libghostty-vt (features: $VT_FEATURES)..."
 cd ghostty
-git apply -R ../patches/ghostty-wasm-api.patch
-# Remove new files created by the patch
-rm -f include/ghostty/vt/terminal.h
-rm -f src/terminal/c/terminal.zig
+zig build \
+    -Demit-lib-vt \
+    -Dtarget=wasm32-freestanding \
+    -Doptimize=ReleaseSmall \
+    "-Dvt-features=$VT_FEATURES"
 cd ..
+
+cp ghostty/zig-out/bin/ghostty-vt.wasm ./
 
 SIZE=$(du -h ghostty-vt.wasm | cut -f1)
 echo "✅ Built ghostty-vt.wasm ($SIZE)"

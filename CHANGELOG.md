@@ -2,11 +2,21 @@
 
 ## 0.7.0 (2026-10-17)
 
-The canvas is drawn only when something changed, and only where it changed; embedders can draw glyphs themselves with `drawGlyph`.
+Terminals now draw with WebGL2 by default, built from upstream libghostty-vt with no patches. The canvas is drawn only when something changed, and only where it changed; embedders can draw glyphs themselves with `drawGlyph`.
+
+### ⚠ BREAKING CHANGES
+
+* **build:** the WASM is built from upstream [libghostty-vt](https://mitchellh.com/writing/libghostty-is-coming) (the `ghostty` submodule) through its C API, with no patches; `patches/ghostty-wasm-api.patch` is gone. Building needs Zig 0.16.
+* **build:** the WASM is larger (~600 KB); the CI size limit is raised to 640 KiB.
 
 ### Features
 
-* **render:** add `drawGlyph` option (`GlyphDrawer`) to draw glyphs the font should not, such as box drawing that must fill its cell. It gets the canvas context (scaled to CSS pixels), the cell, its box and its color, with the font and alpha already set, and returns `true` when it drew the glyph or `false` to fall back to text. It is not called for blank cells nor for printable ASCII drawn in runs, and is read by `open()`.
+* **render:** WebGL2 is the default renderer: cells are instanced quads, glyphs come from a texture atlas rasterized once per glyph. All terminals on a page share one WebGL context and one atlas per font. Without WebGL2 (or with software-only WebGL), when the frame is too big for a drawing buffer and while a lost context is restored, the terminal draws with Canvas2D.
+* **render:** add `renderer` option: `'webgl'` (default) or `'canvas'` to always draw with Canvas2D. Read by `open()`.
+* **render:** add `customGlyphs` option (default `true`): box drawing, block elements, shades, braille and Powerline triangles and half circles are drawn as shapes on whole device pixels, so lines join across cells. `false` draws them with the font. Read by `open()`.
+* **render:** add `lowLatency` option (default `false`): a desynchronized canvas that shows frames without waiting for the compositor, at the risk of tearing. Read by `open()`.
+* **render:** add `drawGlyph` option (`GlyphDrawer`) to draw glyphs yourself (symbols the font lacks, icons). It gets the canvas context (scaled to CSS pixels), the cell, its box and its color, with the font and alpha already set, and returns `true` when it drew the glyph or `false` to fall back to the built-in drawing. Read by `open()`. With WebGL it is called once per glyph (codepoint, bold/italic and cell width), printable ASCII included, in white, and the result is cached and tinted per cell: the drawing must not depend on the cell's position or colors. With Canvas2D it is called for each non-blank cell drawn, except printable ASCII drawn in runs.
+* **demo:** PTY output goes out as binary WebSocket messages, batched, and the browser acknowledges bytes once parsed (`write(data, callback)`); the server pauses the PTY while too much is unacknowledged.
 
 ### Performance Improvements
 
