@@ -1,6 +1,6 @@
 {
   "name": "@tahul/ghostty-web",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Web-based terminal emulator using Ghostty's VT100 parser via WebAssembly",
   "type": "module",
   "main": "./dist/ghostty-web.umd.cjs",

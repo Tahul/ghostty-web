@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.7.0 (2026-10-17)
+
+The canvas is drawn only when something changed, and only where it changed; embedders can draw glyphs themselves with `drawGlyph`.
+
+### Features
+
+* **render:** add `drawGlyph` option (`GlyphDrawer`) to draw glyphs the font should not, such as box drawing that must fill its cell. It gets the canvas context (scaled to CSS pixels), the cell, its box and its color, with the font and alpha already set, and returns `true` when it drew the glyph or `false` to fall back to text. It is not called for blank cells nor for printable ASCII drawn in runs, and is read by `open()`.
+
+### Performance Improvements
+
+* **render:** frames are drawn on demand (output, resize, scrolling, selection, link hover, cursor blink) instead of on every animation frame; an idle terminal draws nothing.
+* **render:** a frame redraws only the rows that changed, plus their neighbours for glyphs overflowing their row; the cursor is redrawn only when it moved, blinked or its row was redrawn, and a scrolled-up viewport is drawn once instead of every frame.
+* **render:** printable ASCII of one style is drawn one run per `fillText`, with ligatures and kerning off so runs match cell-by-cell drawing. Adjacent cells of one background share a `fillRect`; cells on the theme background get no fill and blank cells no text.
+* **write:** writes reuse one WASM buffer and encode in place, the viewport is parsed once per write or resize instead of on every row read, and a write drops cached links only on the rows it changed.
+
+### Bug Fixes
+
+* **render:** `resize()` and font changes no longer reset the canvas to 1x resolution, which left text blurry on HiDPI screens.
+* **render:** explicit black backgrounds (e.g. `\x1b[48;2;0;0;0m`) are drawn black instead of showing the theme background.
+* **links:** `resize()`, `clear()` and `reset()` drop cached links, so hovering no longer finds links on rows whose content changed.
+
 ## 0.6.0 (2026-09-29)
 
 Embedders can now route link opening, wrapped URLs are detected as one link, and mouse input goes to exactly one owner.
