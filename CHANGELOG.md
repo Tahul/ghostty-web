@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 (2026-10-17)
+## 0.8.1 (2026-10-17)
 
 Terminals now draw with WebGL2 by default, built from upstream libghostty-vt with no patches.
 
