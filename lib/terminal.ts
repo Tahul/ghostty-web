@@ -17,12 +17,7 @@
 
 import { BufferNamespace } from './buffer';
 import { EventEmitter } from './event-emitter';
-import {
-  type Ghostty,
-  type GhosttyCell,
-  type GhosttyTerminal,
-  type GhosttyTerminalConfig,
-} from './ghostty';
+import type { Ghostty, GhosttyCell, GhosttyTerminal, GhosttyTerminalConfig } from './ghostty';
 import { getGhostty } from './index';
 import { InputHandler, type MouseTrackingConfig } from './input-handler';
 import type {

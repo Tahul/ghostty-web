@@ -1,6 +1,6 @@
 {
   "name": "@ghostty-web/demo",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Cross-platform demo server for ghostty-web terminal emulator",
   "type": "module",
   "bin": {
