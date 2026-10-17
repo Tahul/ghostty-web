@@ -87,6 +87,24 @@ Custom providers registered with `registerLinkProvider` are unaffected.
 
 When the running program enables mouse tracking (vim, `less --mouse`, htop, tmux...), mouse and wheel input go to the program only: the wheel doesn't scroll the viewport and dragging doesn't select text. Hold **Shift** to bypass it: Shift+drag selects, Shift+wheel scrolls the scrollback, and nothing is reported to the program. Link clicks also require Shift while the program tracks the mouse.
 
+### Rendering
+
+The canvas is redrawn only when something changed: output, a resize, scrolling, a selection or link-hover change, a cursor blink. An idle terminal draws no frames. Only changed rows are redrawn; printable ASCII of one style is drawn one run per `fillText`, with ligatures and kerning off so it matches cell-by-cell drawing.
+
+### Custom glyphs
+
+`drawGlyph` draws glyphs the font should not, such as box drawing that must fill its cell. It gets the canvas context (scaled to CSS pixels), the cell, its box and its color, with the font and alpha already set; return `true` when it drew the glyph, `false` to fall back to text. It is not called for blank cells nor for printable ASCII drawn in runs, and is read by `open()`:
+
+```javascript
+const term = new Terminal({
+  drawGlyph(ctx, cell, x, y, width, height, color) {
+    if (cell.codepoint !== 0x2500) return false; // ─
+    ctx.fillRect(x, y + height / 2, width, 1);
+    return true;
+  },
+});
+```
+
 ## Development
 
 ghostty-web builds from Ghostty's source with a [patch](./patches/ghostty-wasm-api.patch) to expose additional

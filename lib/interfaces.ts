@@ -3,6 +3,7 @@
  */
 
 import type { Ghostty } from './ghostty';
+import type { GlyphDrawer } from './renderer';
 
 export interface ITerminalOptions {
   cols?: number; // Default: 80
@@ -30,6 +31,12 @@ export interface ITerminalOptions {
    * changed after open() via `term.options.linkHandler = ...`.
    */
   linkHandler?: ILinkHandler | null;
+
+  /**
+   * Draws glyphs the font should not (box drawing that must fill its cell,
+   * custom symbols): return true when drawn. See GlyphDrawer. Read by open().
+   */
+  drawGlyph?: GlyphDrawer;
 
   // Internal: Ghostty WASM instance (optional, for test isolation)
   // If not provided, uses the module-level instance from init()

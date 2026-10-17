@@ -149,6 +149,11 @@ export class LinkDetector {
     this.scannedRows.clear();
   }
 
+  /** Whether any row has been scanned (so a content change has something to invalidate). */
+  hasCachedRows(): boolean {
+    return this.scannedRows.size > 0 || this.linkCache.size > 0;
+  }
+
   /**
    * Invalidate cache for specific rows
    * Used when only part of the terminal changed

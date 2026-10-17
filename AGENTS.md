@@ -31,7 +31,7 @@ This is a **fully functional terminal emulator** (MVP complete) that uses Ghostt
 **What works:**
 
 - ✅ Full VT100/ANSI terminal emulation (vim, htop, colors, etc.)
-- ✅ Canvas-based renderer with 60 FPS
+- ✅ Canvas-based renderer, frames drawn on demand (idle terminals draw nothing)
 - ✅ Keyboard input handling (Kitty keyboard protocol)
 - ✅ Text selection and clipboard
 - ✅ WebSocket PTY integration (real shell sessions)
@@ -58,7 +58,7 @@ This is a **fully functional terminal emulator** (MVP complete) that uses Ghostt
             │   └─ VT100 state machine, screen buffer
             │
             ├─► CanvasRenderer (lib/renderer.ts)
-            │   └─ 60 FPS rendering, all colors/styles
+            │   └─ on-demand rendering, all colors/styles
             │
             ├─► InputHandler (lib/input-handler.ts)
             │   └─ Keyboard events → escape sequences
